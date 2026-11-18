@@ -1,0 +1,18 @@
+{
+  "name": "easy-read-airesponse",
+  "version": "1.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Read long ChatGPT answers as live, navigable Markdown cards in Chrome and Edge.",
+  "repository": { "type": "git", "url": "https://github.com/sundeyao/Easy-read-airesponse.git" },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node tests/extension.mjs",
+    "install:browser": "playwright install chromium"
+  },
+  "devDependencies": {
+    "fflate": "0.8.3",
+    "playwright-core": "1.56.1"
+  }
+}

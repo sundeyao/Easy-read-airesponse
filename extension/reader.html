@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>折页 · 实时对话阅读</title>
+  <link rel="icon" href="icon.png"><link rel="stylesheet" href="reader.css">
+  <script src="vendor/marked.umd.js" defer></script><script src="vendor/purify.min.js" defer></script>
+  <script src="reader.js" type="module"></script>
+</head>
+<body>
+  <div class="workspace">
+    <aside class="sidebar">
+      <div class="sidebar-head"><div class="brand"><img src="icon.png" alt="" width="25" height="25"><strong>折页</strong><span>实时对话</span></div><span id="answer-count">0 条回答</span></div>
+      <div class="source-info"><h1 id="source-title">让长回答，一块一块展开。</h1><p id="source-description">打开 ChatGPT 对话，点击工具栏里的折页图标。</p></div>
+      <label class="search-label"><span class="sr-only">搜索问题或回答</span><input id="search" type="search" placeholder="搜索问题或回答…" autocomplete="off"></label>
+      <nav id="answer-list" aria-label="AI 回答列表"><p class="list-empty">连接后，AI 的每条回答会出现在这里。</p></nav>
+      <div class="tools">
+        <div class="connection"><span id="status-dot" class="dot"></span><strong id="status" role="status">尚未连接</strong><span id="sync-time"></span></div>
+        <p id="error" role="alert" hidden></p>
+        <label class="follow"><input type="checkbox" id="follow"> 跟随最新回答</label>
+        <div class="tool-grid"><button id="sync" title="重新读取当前已连接的页面">↻ 同步</button><button id="pause">Ⅱ 暂停</button><button id="source">↗ 原对话</button><button id="expand">▣ 独立标签</button></div>
+        <details class="settings"><summary>阅读与保存</summary><div class="settings-body"><label>卡片长度<select id="size"><option value="fine">短卡片</option><option value="balanced" selected>适中卡片</option><option value="relaxed">长卡片</option></select></label><div class="tool-grid"><button id="download">↓ 导出 Markdown</button><button id="clear">清空当前内容</button><button id="copy-diagnostics">复制诊断信息</button></div><p><span id="extension-version"></span> · 内容只在本机处理，当前对话暂存在浏览器会话中。关闭浏览器后清除；需要保留时请导出。</p></div></details>
+      </div>
+    </aside>
+    <main class="reader">
+      <div id="empty" class="empty"><div class="empty-art" aria-hidden="true">▱</div><span class="eyebrow">给阅读一点空间</span><h2 id="empty-title">把对话折成清晰的卡片</h2><p id="empty-description">在 ChatGPT 对话页面点击 <strong>折页扩展图标</strong>，<br>这里就会开始实时同步。</p><ol id="empty-steps"><li>左侧选择一条 AI 回答</li><li>顶部切换大标题，流程始终可见</li><li>长章节继续拆分，逐块阅读</li></ol><button id="empty-diagnostics" hidden>复制诊断信息（不含聊天正文）</button><p class="quiet">只读取已连接页面中加载的消息。更早的内容需要先在原页面加载。</p></div>
+      <div id="reading" hidden>
+        <header class="flow-header"><div class="flow-caption"><span>章节流程 · 始终可见</span><span id="section-count"></span></div><nav id="flow" aria-label="大标题流程"></nav></header>
+        <div id="part-bar" hidden><span id="part-label"></span><nav id="parts" aria-label="本章卡片"></nav></div>
+        <div id="card-scroll" tabindex="0" aria-label="当前阅读卡片">
+          <article class="card"><div class="card-meta"><span id="step"></span><span id="live-label"></span></div><h2 id="card-title"></h2><div id="card-body" class="markdown"></div><footer class="card-foot"><span id="word-count"></span><div><button id="font-down" aria-label="缩小文字">A−</button><span id="font-value">17</span><button id="font-up" aria-label="放大文字">A+</button><button id="copy">复制卡片</button></div></footer></article>
+        </div>
+        <footer class="reader-footer"><button id="prev">← 上一块</button><button id="mark" title="空格：标记已读">○ 标记已读</button><span id="progress"></span><button id="next" class="primary">下一块 →</button></footer>
+      </div>
+    </main>
+  </div>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

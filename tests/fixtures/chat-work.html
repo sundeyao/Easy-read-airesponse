@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>新版登录对话 · ChatGPT</title></head><body>
+<!-- Synthetic fixture based on reported September–November 2026 semantic markers.
+     No article, conversation-turn or data-message-author-role nodes are present.
+     This is a layout regression fixture, not a capture from the user's account. -->
+<aside><div data-content-search-unit-key="sidebar:0:assistant">SIDEBAR_SECRET</div></aside>
+<main data-app-shell-main-surface="browser">
+  <div data-app-action-timeline-scroll role="region">
+    <div data-turn-key="modern-question-1">
+      <div data-chatgpt-search-unit-key="fallback-turn-0:0:user" data-chatgpt-search-message-ids='["modern-question-1","modern-question-1"]'>
+        <div data-content-search-unit-key="fallback-turn-0:0:user"><div data-user-message-bubble="true"><p>为什么 getById 和 listByIds 的查询次数不同？</p><button>显示更多</button></div></div>
+      </div>
+      <div data-chatgpt-search-unit-key="fallback-turn-0:0:assistant" data-chatgpt-search-message-ids="modern-answer-1 modern-answer-1">
+        <div data-content-search-unit-key="fallback-turn-0:0:assistant">
+          <div data-markdown-text-style="assistant-message" data-markdown-text-tone="tertiary"><p>THINKING_RECAP_SECRET</p></div>
+          <div data-markdown-text-style="assistant-message"><p>这段代码主要完成图片信息转换和关联用户信息。</p><h2>单张图片的封装</h2><p>getById 接收一个用户 ID，取得一个用户的信息。</p><pre><code class="language-java">User user = userService.getById(userId);</code></pre><h2>分页数据的批量转换</h2><p>先收集不同用户 ID，再通过 listByIds 一次查询。</p><table><tr><th>方式</th><th>调用次数</th></tr><tr><td>批量查询</td><td>1 次</td></tr></table></div>
+        </div>
+      </div>
+    </div>
+    <div data-turn-key="modern-question-2">
+      <div data-content-search-unit-key="fallback-turn-1:0:user" data-chatgpt-search-message-ids="modern-question-2"><div data-user-message-bubble="true"><p>用户 ID 从哪里来？</p></div></div>
+      <div data-content-search-unit-key="fallback-turn-1:0:assistant" data-chatgpt-search-message-ids='["modern-answer-2"]'><div data-markdown-text-style="assistant-message"><h2>ID 的来源</h2><p>来自后端返回的图片信息。</p></div></div>
+    </div>
+  </div>
+  <div data-app-action-timeline-scroll role="presentation"><div data-turn-key="hidden-timeline"><div data-content-search-unit-key="hidden:0:assistant"><div data-markdown-text-style="assistant-message">HIDDEN_TIMELINE_SECRET</div></div></div></div>
+  <form data-chatgpt-composer><div contenteditable="true" role="textbox"><div data-markdown-text-style="assistant-message">DRAFT_SECRET</div></div></form>
+</main></body></html>
