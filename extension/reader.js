@@ -1,8 +1,9 @@
 import { segmentMarkdown, plainText, comparisonModel } from './reader-core.js';
 const $ = id => document.getElementById(id);
+const themes = globalThis.FoldThemes;
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let session = {}, snapshot = null, answers = [], selected = null, result = { cards: [], sections: [] }, views = new Map();
-let preferences = { size: 'balanced', font: 17, follow: false }, toastTimer, saveTimer, currentText = null;
+let preferences = { size: 'balanced', font: 17, follow: false, theme: themes.loadCached() }, toastTimer, saveTimer, currentText = null;
 let view = { index: 0, scroll: 0, read: new Set() };
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 3000); }
 async function command(type) { try { const response = await chrome.runtime.sendMessage({ type: 'reader:' + type }); if (response?.error) toast(response.error); } catch { toast('扩展已更新，请关闭此阅读页后重新打开。'); } }
@@ -14,9 +15,41 @@ function savePosition() {
   }, 250);
 }
 function settingChanged() {
-  preferences = { size: $('size').value, font: preferences.font, follow: $('follow').checked };
+  preferences = { ...preferences, size: $('size').value, follow: $('follow').checked };
   chrome.storage.local.set({ foldPreferences: preferences });
 }
+function preview(button, value) {
+  const { colors } = themes.palette(value);
+  for (const [name, key] of Object.entries({ bg: '--canvas', ink: '--ink', card: '--card', accent: '--accent' })) button.style.setProperty('--preview-' + name, colors[key]);
+}
+function themeControls() {
+  const value = themes.normalize(preferences.theme);
+  for (const button of $('theme-presets').querySelectorAll('[data-theme]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.theme === value.preset));
+    if (button.dataset.theme === 'custom') preview(button, value);
+  }
+  for (const part of ['background', 'accent']) {
+    if ($('theme-' + part).value !== value[part]) $('theme-' + part).value = value[part];
+    $('theme-' + part + '-value').textContent = value[part].toUpperCase();
+  }
+  const label = themes.PRESETS.find(p => p.id === value.preset)?.label || '自定义';
+  $('theme-current').textContent = '当前：' + label;
+}
+function setTheme(value, persist = true) {
+  preferences.theme = themes.normalize(value);
+  themes.apply(preferences.theme); themeControls();
+  if (persist) settingChanged();
+}
+$('theme-presets').innerHTML = [...themes.PRESETS, { id: 'custom', label: '自定义配色' }].map(p => `<button type="button" class="theme-choice" data-theme="${p.id}" aria-pressed="false"><span class="theme-preview" aria-hidden="true"><i></i><b>Aa</b></span><span>${p.label}</span></button>`).join('');
+for (const button of $('theme-presets').querySelectorAll('[data-theme]')) preview(button, button.dataset.theme);
+$('theme-button').addEventListener('click', () => { themeControls(); $('theme-dialog').showModal(); });
+for (const id of ['theme-close', 'theme-done']) $(id).addEventListener('click', () => $('theme-dialog').close());
+$('theme-reset').addEventListener('click', () => setTheme());
+$('theme-presets').addEventListener('click', event => {
+  const button = event.target.closest('[data-theme]'); if (!button) return;
+  setTheme(button.dataset.theme === 'custom' ? { ...preferences.theme, preset: 'custom' } : button.dataset.theme);
+});
+for (const part of ['background', 'accent']) $('theme-' + part).addEventListener('input', event => setTheme({ ...preferences.theme, preset: 'custom', [part]: event.target.value }));
 function markdown(text) {
   const html = DOMPurify.sanitize(marked.parse(text, { gfm: true, breaks: true }), {
     FORBID_TAGS: ['style', 'iframe', 'form', 'input', 'button', 'textarea', 'select', 'video', 'audio', 'object', 'embed'],
@@ -174,13 +207,14 @@ $('download').addEventListener('click', () => {
   const a = document.createElement('a'); a.href = url; a.download = snapshot.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 90) + '.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
 });
 document.addEventListener('keydown', event => {
-  if (event.target.closest('input,select,textarea,button,summary') || event.ctrlKey || event.metaKey || event.altKey || !result.cards.length) return;
+  if ($('theme-dialog').open || event.target.closest('input,select,textarea,button,summary') || event.ctrlKey || event.metaKey || event.altKey || !result.cards.length) return;
   if (event.key === 'ArrowRight') { event.preventDefault(); move(view.index + 1); }
   if (event.key === 'ArrowLeft') { event.preventDefault(); move(view.index - 1); }
   if (event.code === 'Space') { event.preventDefault(); mark(); }
 });
 const [stored, local] = await Promise.all([chrome.storage.session.get(['foldSession', 'foldReading']), chrome.storage.local.get('foldPreferences')]);
-preferences = { ...preferences, ...local.foldPreferences };
+preferences = { ...preferences, ...local.foldPreferences, theme: themes.normalize(local.foldPreferences?.theme) };
+setTheme(preferences.theme, false);
 $('size').value = preferences.size; $('follow').checked = preferences.follow; font(0);
 accept(stored.foldSession);
 const saved = stored.foldReading;
@@ -189,4 +223,10 @@ if (saved && snapshot && saved.key === snapshot.key && Array.isArray(saved.views
   views = new Map(saved.views.map(([id, v]) => [id, { ...v, read: new Set(v.read) }]));
   if (answers.some(a => a.id === saved.selected) && !preferences.follow) { selected = null; choose(saved.selected); }
 }
-chrome.storage.onChanged.addListener((changes, area) => { if (area === 'session' && changes.foldSession) accept(changes.foldSession.newValue); });
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'session' && changes.foldSession) accept(changes.foldSession.newValue);
+  if (area === 'local' && changes.foldPreferences) {
+    const next = themes.normalize(changes.foldPreferences.newValue?.theme);
+    if (JSON.stringify(next) !== JSON.stringify(preferences.theme)) setTheme(next, false);
+  }
+});

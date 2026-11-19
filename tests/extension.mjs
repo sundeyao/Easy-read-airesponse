@@ -37,6 +37,10 @@ try {
   const worker = await workerFor(context);
   const reader = await openReader(context, worker);
   check('unmodified production MV3 extension and reader load', await reader.locator('#empty').isVisible());
+  check('first launch uses the neutral theme', await reader.evaluate(() => document.documentElement.dataset.theme === 'neutral'));
+  await reader.evaluate(() => chrome.storage.local.set({ foldPreferences: { size: 'fine', font: 19, follow: true } }));
+  await reader.reload(); await reader.waitForFunction(() => document.querySelector('#font-value').textContent === '19');
+  check('pre-theme settings migrate without losing reading preferences', await reader.evaluate(async () => { const value = (await chrome.storage.local.get('foldPreferences')).foldPreferences; return value.theme.preset === 'neutral' && value.size === 'fine' && value.font === 19 && value.follow; }));
   const chat = await context.newPage(); await chat.route('**/*', route => route.fulfill({ contentType: 'text/html', body: initial })); await chat.goto('https://chatgpt.com/c/test-permission');
   const denied = await worker.evaluate(async () => {
     const tab = (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
@@ -98,6 +102,41 @@ try {
   check('resume reads changes accumulated while paused', true);
   await reader.uncheck('#follow'); await reader.click('[data-answer="a2"]');
   check('code and table render as native readable elements', await reader.locator('#card-body pre code').count() === 1 && await reader.locator('#card-body table').count() === 1);
+  const beforeTheme = { title: await reader.locator('#card-title').textContent(), answer: await reader.locator('.answer.active').getAttribute('data-answer') };
+  await reader.click('#theme-button');
+  check('theme picker is available directly from the lower toolbar', await reader.locator('#theme-dialog').isVisible() && await reader.locator('.theme-choice').count() === 7);
+  await reader.click('[data-theme="dark"]');
+  await reader.waitForFunction(async () => (await chrome.storage.local.get('foldPreferences')).foldPreferences.theme.preset === 'dark');
+  check('dark theme recolors reading cards and code blocks', await reader.evaluate(() => document.documentElement.style.colorScheme === 'dark' && [document.querySelector('.card'), document.querySelector('.markdown pre')].every(el => getComputedStyle(el).backgroundColor.match(/\d+/g).slice(0, 3).map(Number).reduce((a, b) => a + b) < 300)));
+  check('theme choices keep readable labels immediately after switching to dark', await reader.evaluate(() => {
+    const hex = value => '#' + value.match(/\d+/g).slice(0, 3).map(Number).map(n => n.toString(16).padStart(2, '0')).join('');
+    return [...document.querySelectorAll('.theme-choice')].every(el => { const css = getComputedStyle(el); return FoldThemes.contrast(hex(css.color), hex(css.backgroundColor)) >= 4.5; });
+  }));
+  await reader.click('#theme-done');
+  check('changing a theme preserves the current answer and reading card', await reader.locator('#card-title').textContent() === beforeTheme.title && await reader.locator('.answer.active').getAttribute('data-answer') === beforeTheme.answer);
+  await reader.screenshot({ path: join(artifacts, 'theme-dark-desktop.png') });
+  await reader.reload(); await reader.waitForSelector('.answer.active');
+  check('theme selection persists when the reader is reopened', await reader.evaluate(() => document.documentElement.dataset.theme === 'dark'));
+  const secondReader = await openReader(context, worker);
+  await reader.click('#theme-button');
+  for (const [id, value] of [['theme-background', '#272033'], ['theme-accent', '#efb862']]) await reader.locator('#' + id).evaluate((el, color) => { el.value = color; el.dispatchEvent(new Event('input', { bubbles: true })); }, value);
+  await secondReader.waitForFunction(() => document.documentElement.dataset.theme === 'custom' && document.documentElement.style.getPropertyValue('--canvas') === '#272033');
+  check('custom background and accent update all open readers', await secondReader.evaluate(async () => { const t = (await chrome.storage.local.get('foldPreferences')).foldPreferences.theme; return t.preset === 'custom' && t.background === '#272033' && t.accent === '#efb862'; }));
+  await reader.click('#theme-done'); await reader.click('#font-up');
+  check('changing font size does not reset the saved custom theme', await reader.evaluate(async () => (await chrome.storage.local.get('foldPreferences')).foldPreferences.theme.background === '#272033'));
+  await reader.click('#font-down'); await reader.reload(); await reader.waitForSelector('.answer.active');
+  check('custom colors persist across reload with the exact selected values', await reader.evaluate(() => document.documentElement.style.getPropertyValue('--canvas') === '#272033' && document.querySelector('#theme-accent').value === '#efb862'));
+  await reader.click('#theme-button');
+  for (const preset of ['neutral', 'warm', 'blue', 'purple', 'green', 'dark']) {
+    await reader.click(`[data-theme="${preset}"]`);
+    check('preset applies immediately: ' + preset, await reader.evaluate(id => document.documentElement.dataset.theme === id, preset));
+  }
+  await reader.click('[data-theme="blue"]');
+  await reader.screenshot({ path: join(artifacts, 'theme-picker-desktop.png') });
+  await reader.click('#theme-reset');
+  await secondReader.waitForFunction(() => document.documentElement.dataset.theme === 'neutral');
+  check('reset restores neutral colors in every reader', await reader.evaluate(async () => (await chrome.storage.local.get('foldPreferences')).foldPreferences.theme.preset === 'neutral'));
+  await reader.click('#theme-done'); await secondReader.close();
   await reader.screenshot({ path: join(artifacts, 'extension-desktop.png') });
   for (const width of [1280, 820, 740, 420, 390, 320]) {
     await reader.setViewportSize({ width, height: width < 760 ? 900 : 950 });
@@ -105,6 +144,15 @@ try {
   }
   await reader.setViewportSize({ width: 420, height: 900 });
   await reader.screenshot({ path: join(artifacts, 'extension-sidepanel.png') });
+  await reader.click('#theme-button');
+  for (const width of [420, 320]) {
+    await reader.setViewportSize({ width, height: 900 });
+    const box = await reader.locator('#theme-dialog').boundingBox();
+    check('theme dialog fits the browser side panel at ' + width + 'px', box.x >= 0 && box.y >= 0 && box.x + box.width <= width && box.y + box.height <= 900 && await reader.locator('#theme-background').isVisible());
+  }
+  await reader.setViewportSize({ width: 420, height: 900 });
+  await reader.click('[data-theme="dark"]'); await reader.screenshot({ path: join(artifacts, 'theme-picker-sidepanel.png') });
+  await reader.click('#theme-reset'); await reader.click('#theme-close');
   await reader.click('.settings summary');
   check('narrow side panel keeps export and reading settings accessible', await reader.locator('#download').isVisible());
   await reader.click('.settings summary');
@@ -180,7 +228,7 @@ try {
   await reader.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async value => { globalThis.__foldDiagnostic = value; } } }));
   await reader.click('#empty-diagnostics');
   const diagnostics = await reader.evaluate(() => JSON.parse(globalThis.__foldDiagnostic));
-  check('copy diagnostics contains layout counts and version without conversation content or identity', diagnostics.version === '1.0.1' && diagnostics.layout.recognized === 0 && !JSON.stringify(diagnostics).match(/modern-layout|没有可识别|chatgpt.com|新版登录对话|messages":\[/));
+  check('copy diagnostics contains layout counts and version without conversation content or identity', diagnostics.version === manifest.version && diagnostics.layout.recognized === 0 && !JSON.stringify(diagnostics).match(/modern-layout|没有可识别|chatgpt.com|新版登录对话|messages":\[/));
   await chat.evaluate(() => { document.querySelector('main').innerHTML = '<section data-turn="user" data-turn-id="section-q"><p>旧版段落问题</p></section><section data-turn="assistant" data-turn-id="section-a"><div class="markdown"><h2>段落布局的回答</h2><p>恢复识别。</p></div></section>'; });
   await waitSnapshot(worker, s => s?.status === 'live' && s.snapshot.messages.length === 2);
   check('empty capture keeps watching and recovers automatically when content mounts', true);

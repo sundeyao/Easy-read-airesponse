@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>折页 · 实时对话阅读</title>
+  <script src="themes.js"></script>
   <link rel="icon" href="icon.png"><link rel="stylesheet" href="reader.css">
   <script src="vendor/marked.umd.js" defer></script><script src="vendor/purify.min.js" defer></script>
   <script src="reader.js" type="module"></script>
@@ -18,7 +19,7 @@
         <div class="connection"><span id="status-dot" class="dot"></span><strong id="status" role="status">尚未连接</strong><span id="sync-time"></span></div>
         <p id="error" role="alert" hidden></p>
         <label class="follow"><input type="checkbox" id="follow"> 跟随最新回答</label>
-        <div class="tool-grid"><button id="sync" title="重新读取当前已连接的页面">↻ 同步</button><button id="pause">Ⅱ 暂停</button><button id="source">↗ 原对话</button><button id="expand">▣ 独立标签</button></div>
+        <div class="tool-grid"><button id="sync" title="重新读取当前已连接的页面">↻ 同步</button><button id="pause">Ⅱ 暂停</button><button id="source">↗ 原对话</button><button id="expand">▣ 独立标签</button><button id="theme-button" title="选择主题颜色" aria-haspopup="dialog">◐ 主题颜色</button></div>
         <details class="settings"><summary>阅读与保存</summary><div class="settings-body"><label>卡片长度<select id="size"><option value="fine">短卡片</option><option value="balanced" selected>适中卡片</option><option value="relaxed">长卡片</option></select></label><div class="tool-grid"><button id="download">↓ 导出 Markdown</button><button id="clear">清空当前内容</button><button id="copy-diagnostics">复制诊断信息</button></div><p><span id="extension-version"></span> · 内容只在本机处理，当前对话暂存在浏览器会话中。关闭浏览器后清除；需要保留时请导出。</p></div></details>
       </div>
     </aside>
@@ -34,6 +35,13 @@
       </div>
     </main>
   </div>
+  <dialog id="theme-dialog" aria-labelledby="theme-title" aria-describedby="theme-description">
+    <header class="theme-header"><div><h2 id="theme-title">主题颜色</h2><p id="theme-description">选择预设，或调成自己喜欢的颜色。修改立即生效。</p></div><button id="theme-close" type="button" aria-label="关闭主题设置">×</button></header>
+    <div id="theme-presets" class="theme-presets" role="group" aria-label="预设主题"></div>
+    <div class="custom-colors"><label for="theme-background"><span>背景颜色</span><div><input type="color" id="theme-background" aria-label="自定义背景颜色"><output id="theme-background-value" for="theme-background"></output></div></label><label for="theme-accent"><span>主题主色</span><div><input type="color" id="theme-accent" aria-label="自定义主题主色"><output id="theme-accent-value" for="theme-accent"></output></div></label></div>
+    <p class="theme-note">文字和代码块会自动适配明暗。配色只保存在本机，下次打开会继续使用。</p>
+    <footer class="theme-footer"><button id="theme-reset" type="button">恢复默认</button><span id="theme-current" role="status"></span><button id="theme-done" class="primary" type="button">完成</button></footer>
+  </dialog>
   <div id="toast" role="status" hidden></div>
 </body>
 </html>
