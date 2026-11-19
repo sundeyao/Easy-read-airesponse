@@ -9,7 +9,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node tests/extension.mjs",
-    "install:browser": "playwright install chromium"
+    "install:browser": "playwright-core install chromium"
   },
   "devDependencies": {
     "fflate": "0.8.3",
