@@ -12,7 +12,7 @@ async function attach(tabId) {
   if (session.tabId && session.tabId !== tabId) await tell(session.tabId, 'watch:stop');
   session = { ...session, tabId, status: 'connecting', error: '' }; await save();
   try {
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['capture-core.js', 'content-script.js'] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['visual-capture.js', 'capture-core.js', 'content-script.js'] });
   } catch {
     session.status = 'error'; session.error = '页面读取权限已失效，请回到 ChatGPT 页面，再点击一次折页图标。'; await save();
   }
@@ -41,8 +41,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       const snapshot = {
         key: new URL(s.url).origin + new URL(s.url).pathname.replace(/\/$/, ''), url: s.url,
         title: String(s.title || '当前对话').slice(0, 200), capturedAt: Date.now(), scope: s.scope,
-        messages: s.messages.filter(m => ['assistant', 'user'].includes(m.role) && typeof m.text === 'string').map(m => ({ id: String(m.id), role: m.role, text: m.text })),
-        diagnostics: Object.fromEntries(['version', 'legacyMarkers', 'searchUnits', 'turnShells', 'bodyMarkers', 'timelines', 'strategy', 'recognized', 'readyState'].filter(key => ['number', 'string'].includes(typeof s.diagnostics?.[key])).map(key => [key, s.diagnostics[key]]))
+        messages: s.messages.filter(m => ['assistant', 'user'].includes(m.role) && typeof m.text === 'string').map(m => ({ id: String(m.id), role: m.role, text: m.text,
+          ...(Array.isArray(m.visuals) && m.visuals.length ? { visuals: m.visuals.slice(0, 24).filter(v => typeof v.id === 'string' && /^visual-[\w-]+$/.test(v.id)).map(v => ({ id: v.id, kind: ['diagram', 'image'].includes(v.kind) && typeof v.data === 'string' && /^data:image\/png;base64,[\dA-Za-z+/=]+$/.test(v.data) && v.data.length <= 1_200_000 ? v.kind : 'unavailable', data: typeof v.data === 'string' && /^data:image\/png;base64,[\dA-Za-z+/=]+$/.test(v.data) && v.data.length <= 1_200_000 ? v.data : undefined, width: Math.min(4000, Math.max(1, Number(v.width) || 1)), height: Math.min(10000, Math.max(1, Number(v.height) || 1)), text: String(v.text || '图示').slice(0, 12000), reason: String(v.reason || '此图暂时无法复制，请在原对话查看。').slice(0, 160) })) } : {}) })),
+        diagnostics: Object.fromEntries(['version', 'legacyMarkers', 'searchUnits', 'turnShells', 'bodyMarkers', 'timelines', 'strategy', 'recognized', 'visuals', 'readyState'].filter(key => ['number', 'string'].includes(typeof s.diagnostics?.[key])).map(key => [key, s.diagnostics[key]]))
       };
       if (new TextEncoder().encode(JSON.stringify(snapshot)).length > 4_000_000) return { stop: true };
       const empty = !snapshot.messages.length;

@@ -35,6 +35,11 @@
       </div>
     </main>
   </div>
+  <dialog id="visual-dialog" aria-labelledby="visual-title">
+    <header class="visual-header"><h2 id="visual-title">原样图示</h2><button id="visual-close" type="button" aria-label="关闭图示">×</button></header>
+    <div class="visual-full"><img id="visual-full-image" alt=""></div>
+    <footer class="visual-footer"><span>保留原图的布局与配色</span><button id="visual-zoom" type="button" aria-pressed="false">原尺寸</button><button id="visual-copy" type="button">复制图片</button><button id="visual-download" type="button">下载 PNG</button></footer>
+  </dialog>
   <dialog id="theme-dialog" aria-labelledby="theme-title" aria-describedby="theme-description">
     <header class="theme-header"><div><h2 id="theme-title">主题颜色</h2><p id="theme-description">选择预设，或调成自己喜欢的颜色。修改立即生效。</p></div><button id="theme-close" type="button" aria-label="关闭主题设置">×</button></header>
     <div id="theme-presets" class="theme-presets" role="group" aria-label="预设主题"></div>

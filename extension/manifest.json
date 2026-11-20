@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "折页 · ChatGPT 卡片阅读",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "将当前 ChatGPT 对话实时拆成阅读卡片，固定章节流程，逐块阅读。",
   "minimum_chrome_version": "116",
   "permissions": ["activeTab", "scripting", "storage", "sidePanel"],

@@ -1,0 +1,21 @@
+<!doctype html><html><head><meta charset="utf-8"><title>文件下载流程 · ChatGPT</title><style>
+body{margin:0;background:#101010;color:#f4f4f5;font:16px/1.7 "Segoe UI","Microsoft YaHei",sans-serif}main{max-width:680px;margin:auto;padding:24px}.flow-picture{border:1px solid #343434;border-radius:14px;padding:14px;margin:20px 0}.flow-panel{border-radius:10px;padding:17px 18px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:#111820;gap:2px}.flow-panel.server{background:#0f2019}.flow-panel.cloud{background:#302411}.flow-panel strong{font-size:20px}.flow-panel small{font-size:14px}.flow-panel svg{height:23px;width:23px;fill:none;stroke:currentColor;stroke-width:1.8;margin:0 0 5px}.connector{text-align:center;padding:9px 0 7px;font-size:14px}.connector b{display:block;font-size:23px;line-height:1.1;color:#cdd1d4}.connector.back b{color:#15c760}.source-image{display:block;width:320px;height:140px;margin:15px 0}h2{font-size:22px}button{color:inherit}
+</style></head><body><nav>SIDEBAR_SECRET</nav><main><div data-app-action-timeline-scroll role="region"><div data-turn-key="visual-question">
+<div data-content-search-unit-key="turn-0:0:user" data-chatgpt-search-message-ids="visual-q"><div data-user-message-bubble="true">文件如何从 COS 下载到前端？</div></div>
+<div data-content-search-unit-key="turn-0:0:assistant" data-chatgpt-search-message-ids="visual-a"><div data-markdown-text-style="assistant-message">
+<p>我们结合文件下载来理解。</p><h2>一、先看整个数据传递过程</h2><p>假设用户点击前端的「下载图片」按钮。</p>
+<div class="flow-picture">
+ <div class="flow-panel"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M9 21h6M12 16v5"/></svg><strong>前端浏览器</strong><small>用户点击下载按钮</small></div>
+ <div class="connector"><b>↓</b>发送 HTTP 请求：请求下载某个文件</div>
+ <div class="flow-panel server"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="2" width="18" height="8" rx="2"/><rect x="3" y="14" width="18" height="8" rx="2"/><path d="M6 6h1M6 18h1"/></svg><strong>后端 Controller</strong><small>接收请求，检查权限，获取文件</small></div>
+ <div class="connector"><b>↓</b>调用 CosManager.getObject()</div>
+ <div class="flow-panel cloud"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M6 18a5 5 0 0 1-1-10 7 7 0 0 1 13-1 5 5 0 0 1 0 11Z"/></svg><strong>腾讯云 COS</strong><small>读取对象存储中的图片文件</small></div>
+ <div class="connector back"><b>↑</b>文件二进制数据返回后端</div>
+ <div class="flow-panel server"><strong>后端 HttpServletResponse</strong><small>将文件二进制数据写入 HTTP 响应</small></div>
+ <div class="connector back"><b>↑</b>HTTP 响应返回给浏览器</div>
+ <div class="flow-panel"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="m8 9 3 3 5-5M9 21h6M12 16v5"/></svg><strong>前端浏览器</strong><small>接收文件，触发下载</small></div>
+</div>
+<p>注意：文件先经过后端，再由后端返回给前端。</p><h2>二、图片与矢量图</h2><p>下面的图片和图形也应保留。</p>
+<img class="source-image" alt="示例图片：蓝色圆形" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='140'%3E%3Crect width='320' height='140' fill='%23e7edf7'/%3E%3Ccircle cx='160' cy='70' r='44' fill='%23436d9b'/%3E%3C/svg%3E">
+<svg role="img" aria-label="两步矢量流程" width="380" height="120" viewBox="0 0 380 120"><rect x="10" y="20" width="140" height="65" rx="8" fill="#173f32"/><text x="80" y="60" text-anchor="middle" fill="white">请求</text><path d="M165 52h45m-10-8 10 8-10 8" fill="none" stroke="#dddddd" stroke-width="2"/><rect x="225" y="20" width="140" height="65" rx="8" fill="#34446b"/><text x="295" y="60" text-anchor="middle" fill="white">响应</text></svg>
+</div></div></div></div></main><form><textarea>DRAFT_SECRET</textarea></form></body></html>

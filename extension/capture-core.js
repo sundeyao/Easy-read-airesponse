@@ -1,6 +1,6 @@
 /* Runs in Chrome's isolated content-script world. No network or account APIs. */
 (() => {
-  const VERSION = '1.0.1';
+  const VERSION = '1.2.0';
   if (globalThis.FoldCapture?.version === VERSION) return;
   const allowed = url => { try { const u = new URL(url); return u.protocol === 'https:' && ['chatgpt.com', 'chat.openai.com'].includes(u.hostname); } catch { return false; } };
   const skipped = 'button,script,style,svg,nav,form,textarea,input,select,[contenteditable="true"],[role="textbox"],[hidden],[aria-hidden="true"],[data-markdown-text-tone="tertiary"],.sr-only';
@@ -8,8 +8,10 @@
   const trim = text => text.replace(/\u00a0/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   const escape = text => text.replace(/\\/g, '\\\\').replace(/([*_[\]<>])/g, '\\$1');
   const inline = node => Array.from(node.childNodes, serialize).join('');
+  let activeVisuals = new WeakMap();
   function serialize(node) {
     if (node.nodeType === 3) return escape(node.textContent);
+    if (activeVisuals.has(node)) return '\n\n![原样图示](fold-visual:' + activeVisuals.get(node).id + ')\n\n';
     if (node.nodeType !== 1 || node.matches(skipped)) return '';
     const tag = node.tagName.toLowerCase();
     if (tag === 'pre') {
@@ -153,14 +155,20 @@
     let roots = allWithSelf(node, role === 'user' ? bubbleSelector : assistantSelector).filter(el => !excluded(el));
     if (!roots.length) roots = allWithSelf(node, '.markdown,[data-message-content],.whitespace-pre-wrap').filter(el => !excluded(el));
     roots = outermost(roots);
-    const text = trim((roots.length ? roots : [node]).map(inline).join('\n\n'));
+    const text = trim((roots.length ? roots : [node]).map(el => activeVisuals.has(el) ? serialize(el) : inline(el)).join('\n\n'));
     return { id: messageId(node, role), role, text: text || (node.querySelector('img,canvas,video,[data-testid*="attachment"]') ? '[附件内容，请在原对话查看]' : '') };
   }
-  function capture(document, url) {
+  function capture(document, url, context) {
     if (!allowed(url)) throw new Error('请在 ChatGPT 对话页使用折页。');
     const raw = embedded(document, url);
-    const { candidates, counts, excluded } = discover(document);
-    const dom = candidates.map(candidate => readMessage(candidate, excluded));
+    const { candidates, counts, excluded } = context?.discovered || discover(document);
+    activeVisuals = context?.map || new WeakMap();
+    const dom = candidates.map(candidate => {
+      const message = readMessage(candidate, excluded);
+      const ids = [...new Set(Array.from(message.text.matchAll(/fold-visual:([\w-]+)/g), match => match[1]))];
+      const visuals = ids.map(id => context?.assets.get(id)).filter(Boolean);
+      return visuals.length ? { ...message, visuals } : message;
+    });
     let messages = dom;
     if (raw?.messages.length) {
       const byId = new Map(dom.map(m => [m.id, m]));
@@ -168,6 +176,7 @@
       const normalize = text => text.replace(/[^\p{L}\p{N}]/gu, '');
       messages = raw.messages.map((m, i) => {
         const live = byId.get(m.id) || (aligned ? dom[i] : null);
+        if (live?.visuals?.length) return { ...m, text: live.text, visuals: live.visuals };
         // Retain source Markdown when the visible words agree. DOM takes over for
         // every streamed change, even a short first token or a shorter edited answer.
         if (live && live.text && !m.text.startsWith('[附件内容') && normalize(live.text) !== normalize(m.text)) return { ...m, text: live.text };
@@ -184,8 +193,26 @@
       title: (raw?.title || document.title.replace(/\s*[-|·]\s*ChatGPT\s*$/i, '') || '当前对话').slice(0, 200),
       messages: [...unique.values()], capturedAt: Date.now(),
       scope: raw ? 'loaded-conversation' : 'visible-page',
-      diagnostics: { version: VERSION, ...counts, strategy: [...new Set(candidates.map(c => c.strategy))].join('+') || (raw ? 'embedded' : 'none'), recognized: unique.size, readyState: document.readyState }
+      diagnostics: { version: VERSION, ...counts, strategy: [...new Set(candidates.map(c => c.strategy))].join('+') || (raw ? 'embedded' : 'none'), recognized: unique.size, visuals: [...unique.values()].reduce((sum, message) => sum + (message.visuals?.length || 0), 0), readyState: document.readyState }
     };
   }
-  globalThis.FoldCapture = { version: VERSION, capture, serialize, allowed, keyFor };
+  async function captureRich(document, url) {
+    if (!globalThis.FoldVisualCapture) return capture(document, url);
+    const discovered = discover(document), map = new WeakMap(), assets = new Map();
+    let bytes = 0;
+    for (const { node } of discovered.candidates) {
+      const messageAssets = new Set();
+      for (const visual of FoldVisualCapture.detect(node).slice(0, 24)) {
+        let asset = await FoldVisualCapture.capture(visual);
+        if (!messageAssets.has(asset.id)) {
+          if (asset.data && bytes + asset.data.length > 2_500_000) asset = { ...asset, id: asset.id + '-limited', kind: 'unavailable', data: undefined, reason: '当前对话图示较多，已保留文字，请在原对话查看此图。' };
+          bytes += asset.data?.length || 0; messageAssets.add(asset.id);
+        }
+        if (!assets.has(asset.id)) assets.set(asset.id, asset);
+        map.set(visual, assets.get(asset.id));
+      }
+    }
+    return capture(document, url, { discovered, map, assets });
+  }
+  globalThis.FoldCapture = { version: VERSION, capture, captureRich, serialize, allowed, keyFor };
 })();

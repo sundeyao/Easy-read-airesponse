@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 const themes = globalThis.FoldThemes;
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let session = {}, snapshot = null, answers = [], selected = null, result = { cards: [], sections: [] }, views = new Map();
-let preferences = { size: 'balanced', font: 17, follow: false, theme: themes.loadCached() }, toastTimer, saveTimer, currentText = null;
+let preferences = { size: 'balanced', font: 17, follow: false, theme: themes.loadCached() }, toastTimer, saveTimer, currentText = null, currentVisuals = '', enlargedVisual = null;
 let view = { index: 0, scroll: 0, read: new Set() };
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 3000); }
 async function command(type) { try { const response = await chrome.runtime.sendMessage({ type: 'reader:' + type }); if (response?.error) toast(response.error); } catch { toast('扩展已更新，请关闭此阅读页后重新打开。'); } }
@@ -51,12 +51,31 @@ $('theme-presets').addEventListener('click', event => {
 });
 for (const part of ['background', 'accent']) $('theme-' + part).addEventListener('input', event => setTheme({ ...preferences.theme, preset: 'custom', [part]: event.target.value }));
 function markdown(text) {
-  const html = DOMPurify.sanitize(marked.parse(text, { gfm: true, breaks: true }), {
+  const source = text.replace(/!\[[^\]]*\]\(fold-visual:([\w-]+)\)/g, (_, id) => `<span data-fold-visual="${id}"></span>`);
+  const html = DOMPurify.sanitize(marked.parse(source, { gfm: true, breaks: true }), {
     FORBID_TAGS: ['style', 'iframe', 'form', 'input', 'button', 'textarea', 'select', 'video', 'audio', 'object', 'embed'],
     FORBID_ATTR: ['style', 'autofocus', 'srcset']
   });
   const template = document.createElement('template'); template.innerHTML = html;
-  template.content.querySelectorAll('img').forEach(img => { const label = document.createElement('span'); label.className = 'quiet'; label.textContent = `[图片：${img.alt || '请在原对话查看'}]`; img.replaceWith(label); });
+  template.content.querySelectorAll('[data-fold-visual]').forEach(placeholder => {
+    const asset = visualById(placeholder.dataset.foldVisual);
+    if (!asset) { placeholder.textContent = '[图示，请在原对话查看]'; return; }
+    const figure = document.createElement('figure'); figure.className = 'original-visual';
+    if (usableVisual(asset)) {
+      const target = document.createElement('button'); target.type = 'button'; target.className = 'visual-target'; target.dataset.visualAction = 'open'; target.dataset.visualId = asset.id; target.setAttribute('aria-label', '放大查看图示');
+      const image = document.createElement('img'); image.src = asset.data; image.alt = asset.text.slice(0, 160); image.width = asset.width; image.height = asset.height; target.append(image); figure.append(target);
+      const caption = document.createElement('figcaption');
+      const label = document.createElement('span'); label.textContent = asset.kind === 'diagram' ? '原样图示' : '图片'; caption.append(label);
+      for (const [action, title] of [['open', '放大'], ['copy', '复制图片'], ['download', '下载 PNG']]) { const button = document.createElement('button'); button.type = 'button'; button.textContent = title; button.dataset.visualAction = action; button.dataset.visualId = asset.id; caption.append(button); }
+      figure.append(caption);
+      const details = document.createElement('details'), summary = document.createElement('summary'), prose = document.createElement('p'); summary.textContent = '图示文字'; prose.textContent = asset.text; details.append(summary, prose); figure.append(details);
+    } else {
+      const note = document.createElement('p'); note.className = 'visual-unavailable'; note.textContent = asset.reason || '此图暂时无法复制，请在原对话查看。';
+      const prose = document.createElement('p'); prose.className = 'visual-text'; prose.textContent = asset.text; figure.append(note, prose);
+    }
+    placeholder.replaceWith(figure);
+  });
+  template.content.querySelectorAll('img').forEach(img => { if (img.closest('.original-visual') && /^data:image\/png;base64,[\dA-Za-z+/=]+$/.test(img.src)) return; const label = document.createElement('span'); label.className = 'quiet'; label.textContent = `[图片：${img.alt || '请在原对话查看'}]`; img.replaceWith(label); });
   template.content.querySelectorAll('a').forEach(a => {
     if (!/^(https?:|mailto:)/i.test(a.getAttribute('href') || '')) a.removeAttribute('href');
     a.target = '_blank'; a.rel = 'noopener noreferrer';
@@ -64,6 +83,44 @@ function markdown(text) {
   template.content.querySelectorAll('table').forEach(table => { const wrapper = document.createElement('div'); wrapper.className = 'table-wrap'; table.replaceWith(wrapper); wrapper.append(table); });
   const wrapper = document.createElement('div'); wrapper.append(template.content); return wrapper.innerHTML;
 }
+function visualById(id) { return answers.find(a => a.id === selected)?.visuals?.find(asset => asset.id === id); }
+function usableVisual(asset) { return asset && ['diagram', 'image'].includes(asset.kind) && typeof asset.data === 'string' && /^data:image\/png;base64,[\dA-Za-z+/=]+$/.test(asset.data); }
+function visualStamp(answer) { return JSON.stringify((answer?.visuals || []).map(v => [v.id, v.kind, v.data?.length, v.width, v.height, v.reason])); }
+function portableMarkdown(text, visuals = []) {
+  return text.replace(/!\[[^\]]*\]\(fold-visual:([\w-]+)\)/g, (_, id) => {
+    const asset = visuals.find(v => v.id === id); if (!asset) return '[图示，请在原对话查看]';
+    return usableVisual(asset) ? `![${asset.kind === 'diagram' ? '原样图示' : '图片'}](${asset.data})` : '> ' + (asset.reason || '图示未复制') + '\n\n' + asset.text;
+  });
+}
+function downloadVisual(asset) {
+  if (!usableVisual(asset)) return;
+  const link = document.createElement('a'); link.href = asset.data; link.download = '折页-' + asset.id + '.png'; link.click();
+}
+async function copyVisual(asset) {
+  if (!usableVisual(asset)) return;
+  try {
+    const bytes = Uint8Array.from(atob(asset.data.split(',')[1]), value => value.charCodeAt(0));
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]); toast('已复制图片，可直接粘贴。');
+  } catch { toast('浏览器未允许复制图片，可以使用“下载 PNG”。'); }
+}
+function openVisual(asset) {
+  if (!usableVisual(asset)) return;
+  enlargedVisual = asset; $('visual-full-image').src = asset.data; $('visual-full-image').alt = asset.text.slice(0, 200);
+  $('visual-full-image').parentElement.classList.remove('zoomed'); $('visual-zoom').textContent = '原尺寸'; $('visual-zoom').setAttribute('aria-pressed', 'false');
+  $('visual-title').textContent = asset.kind === 'diagram' ? '原样图示' : '图片'; $('visual-dialog').showModal();
+}
+$('card-body').addEventListener('click', event => {
+  const button = event.target.closest('[data-visual-action]'); if (!button) return;
+  const asset = visualById(button.dataset.visualId);
+  if (button.dataset.visualAction === 'open') openVisual(asset);
+  if (button.dataset.visualAction === 'copy') copyVisual(asset);
+  if (button.dataset.visualAction === 'download') downloadVisual(asset);
+});
+$('visual-close').addEventListener('click', () => $('visual-dialog').close());
+$('visual-dialog').addEventListener('close', () => { enlargedVisual = null; $('visual-full-image').removeAttribute('src'); });
+$('visual-copy').addEventListener('click', () => copyVisual(enlargedVisual)); $('visual-download').addEventListener('click', () => downloadVisual(enlargedVisual));
+function zoomVisual() { const zoomed = $('visual-full-image').parentElement.classList.toggle('zoomed'); $('visual-zoom').textContent = zoomed ? '适应窗口' : '原尺寸'; $('visual-zoom').setAttribute('aria-pressed', String(zoomed)); }
+$('visual-zoom').addEventListener('click', zoomVisual); $('visual-full-image').addEventListener('click', zoomVisual);
 function content(card) {
   const model = comparisonModel(card.markdown);
   if (!model) {
@@ -74,7 +131,7 @@ function content(card) {
 }
 function listAnswers() {
   const query = $('search').value.trim().toLocaleLowerCase();
-  const filtered = answers.filter(a => (a.question + '\n' + a.text).toLocaleLowerCase().includes(query));
+  const filtered = answers.filter(a => (a.question + '\n' + a.text + '\n' + (a.visuals || []).map(v => v.text).join('\n')).toLocaleLowerCase().includes(query));
   $('answer-count').textContent = `${answers.length} 条回答`;
   const oldScroll = $('answer-list').scrollTop, oldLeft = $('answer-list').scrollLeft;
   $('answer-list').innerHTML = filtered.map(answer => `<button class="answer${selected === answer.id ? ' active' : ''}" data-answer="${esc(answer.id)}" ${selected === answer.id ? 'aria-current="true"' : ''}><div class="answer-top"><span>回答 ${String(answer.number).padStart(2, '0')}</span><span>${answer.text ? plainText(answer.text).length + ' 字' : '正在生成'}</span></div><strong>${esc(plainText(answer.question).slice(0, 130) || 'AI 回答')}</strong><p>${esc(plainText(answer.text).slice(0, 100) || '等待回答内容…')}</p></button>`).join('') || '<p class="list-empty">' + (query ? '没有匹配的回答。' : session.status === 'empty' ? '已连接页面，但尚未识别到消息。' : snapshot ? '等待原对话加载 AI 回答。' : '连接后，AI 的每条回答会出现在这里。') + '</p>';
@@ -133,6 +190,7 @@ function choose(id) {
   savePosition(); selected = id;
   view = views.get(id) || { index: 0, scroll: 0, read: new Set() };
   currentText = answers.find(a => a.id === id)?.text || '';
+  currentVisuals = visualStamp(answers.find(a => a.id === id));
   result = segmentMarkdown(currentText, { size: preferences.size });
   view.index = Math.min(view.index, Math.max(0, result.cards.length - 1));
   views.set(id, view); listAnswers(); renderCard(); savePosition();
@@ -148,6 +206,7 @@ function accept(next) {
   const oldSnapshot = snapshot, nextSnapshot = session.snapshot || null;
   const changedChat = oldSnapshot?.key !== nextSnapshot?.key;
   if (changedChat) {
+    if ($('visual-dialog').open) $('visual-dialog').close();
     clearTimeout(saveTimer); views = new Map(); selected = null; currentText = null;
     view = { index: 0, scroll: 0, read: new Set() };
   }
@@ -165,9 +224,10 @@ function accept(next) {
   listAnswers();
   if (!target) { result = { cards: [], sections: [] }; renderCard(); return; }
   const answer = answers.find(a => a.id === selected);
-  if (answer.text === currentText) return;
+  if (answer.text === currentText && visualStamp(answer) === currentVisuals) return;
   const previous = result.cards[view.index], scroll = $('card-scroll').scrollTop;
   result = segmentMarkdown(answer.text, { size: preferences.size }); currentText = answer.text;
+  currentVisuals = visualStamp(answer);
   // Streaming additions keep the current section/part and scroll position.
   const same = result.cards.findIndex(c => c.markdown === previous?.markdown);
   const equivalent = result.cards.findIndex(c => c.sectionTitle === previous?.sectionTitle && c.part === previous?.part);
@@ -187,7 +247,7 @@ $('follow').addEventListener('change', () => { settingChanged(); if (preferences
 $('size').addEventListener('change', () => { settingChanged(); if (selected) { view.index = 0; view.scroll = 0; view.read.clear(); currentText = null; result = segmentMarkdown(answers.find(a => a.id === selected).text, { size: preferences.size }); renderCard(); savePosition(); } });
 function font(delta) { preferences.font = Math.max(13, Math.min(25, preferences.font + delta)); document.documentElement.style.setProperty('--font', preferences.font + 'px'); $('font-value').textContent = preferences.font; settingChanged(); }
 $('font-up').addEventListener('click', () => font(1)); $('font-down').addEventListener('click', () => font(-1));
-$('copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(result.cards[view.index].markdown); toast('已复制这张卡片的 Markdown。'); } catch { toast('复制未成功，请在独立标签中重试。'); } });
+$('copy').addEventListener('click', async () => { try { const answer = answers.find(a => a.id === selected); await navigator.clipboard.writeText(portableMarkdown(result.cards[view.index].markdown, answer?.visuals)); toast('已复制这张卡片的 Markdown。'); } catch { toast('复制未成功，请在独立标签中重试。'); } });
 $('sync').addEventListener('click', () => command('resume'));
 $('pause').addEventListener('click', () => command(session.status === 'paused' ? 'resume' : 'pause'));
 $('source').addEventListener('click', () => command('source')); $('expand').addEventListener('click', () => command('expand'));
@@ -202,12 +262,12 @@ $('extension-version').textContent = 'v' + chrome.runtime.getManifest().version;
 $('clear').addEventListener('click', async () => { await command('clear'); await chrome.storage.session.remove('foldReading'); });
 $('download').addEventListener('click', () => {
   if (!snapshot) return;
-  const source = '# ' + snapshot.title + '\n\n来源：' + snapshot.url + '\n\n' + snapshot.messages.map(m => '## ' + (m.role === 'user' ? '用户' : 'AI 回答') + '\n\n' + m.text).join('\n\n---\n\n');
+  const source = '# ' + snapshot.title + '\n\n来源：' + snapshot.url + '\n\n' + snapshot.messages.map(m => '## ' + (m.role === 'user' ? '用户' : 'AI 回答') + '\n\n' + portableMarkdown(m.text, m.visuals)).join('\n\n---\n\n');
   const url = URL.createObjectURL(new Blob([source], { type: 'text/markdown;charset=utf-8' }));
   const a = document.createElement('a'); a.href = url; a.download = snapshot.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 90) + '.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
 });
 document.addEventListener('keydown', event => {
-  if ($('theme-dialog').open || event.target.closest('input,select,textarea,button,summary') || event.ctrlKey || event.metaKey || event.altKey || !result.cards.length) return;
+  if ($('theme-dialog').open || $('visual-dialog').open || event.target.closest('input,select,textarea,button,summary') || event.ctrlKey || event.metaKey || event.altKey || !result.cards.length) return;
   if (event.key === 'ArrowRight') { event.preventDefault(); move(view.index + 1); }
   if (event.key === 'ArrowLeft') { event.preventDefault(); move(view.index - 1); }
   if (event.code === 'Space') { event.preventDefault(); mark(); }

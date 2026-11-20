@@ -233,6 +233,78 @@ try {
   await waitSnapshot(worker, s => s?.status === 'live' && s.snapshot.messages.length === 2);
   check('empty capture keeps watching and recovers automatically when content mounts', true);
   check('section-based legacy turn shells are also supported', (await state(worker)).snapshot.messages[1].id === 'section-a');
+  const visualFixture = await readFile(join(root, 'tests/fixtures/visuals.html'), 'utf8');
+  await chat.evaluate(html => {
+    history.pushState({}, '', '/c/visuals');
+    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    const style = document.createElement('style'); style.textContent = parsed.querySelector('style').textContent; document.head.append(style);
+    document.title = parsed.title; document.body.replaceWith(parsed.body);
+  }, visualFixture);
+  const withVisuals = await waitSnapshot(worker, s => s?.snapshot.key.endsWith('/c/visuals') && s.snapshot.messages.find(m => m.id === 'visual-a')?.visuals?.length === 3);
+  const visualAnswer = withVisuals.snapshot.messages.find(m => m.id === 'visual-a');
+  check('styled HTML flow, loaded image and standalone SVG are retained as local PNGs', visualAnswer.visuals.every(v => ['diagram', 'image'].includes(v.kind) && v.data.startsWith('data:image/png;base64,iVBORw0KGgo')));
+  check('diagram capture excludes drafts and sidebar content', !visualAnswer.visuals.some(v => /DRAFT_SECRET|SIDEBAR_SECRET/.test(v.text)));
+  await reader.waitForFunction(() => document.querySelector('.answer.active')?.dataset.answer === 'visual-a');
+  await reader.fill('#search', 'HttpServletResponse');
+  check('text inside a captured diagram remains searchable', await reader.locator('.answer').count() === 1);
+  await reader.fill('#search', '');
+  check('a complete flow stays one atomic visual marker instead of flattened headings', (visualAnswer.text.match(/fold-visual:/g) || []).length === 3 && !visualAnswer.text.includes('后端 Controller') && visualAnswer.visuals[0].text.includes('后端 Controller') && visualAnswer.visuals[0].text.includes('↑'));
+  await reader.waitForFunction(() => document.querySelector('.answer.active')?.dataset.answer === 'visual-a');
+  await reader.locator('#flow button').filter({ hasText: '先看整个数据传递过程' }).click();
+  await reader.waitForFunction(() => document.querySelector('.original-visual img')?.complete && document.querySelector('.original-visual img')?.naturalWidth > 0);
+  check('reader displays the entire flow as an image in its matching chapter', await reader.locator('#card-body .original-visual').count() === 1 && await reader.locator('#card-body .original-visual img').count() === 1);
+  const firstImage = visualAnswer.visuals[0];
+  await writeFile(join(artifacts, 'copied-flow.png'), Buffer.from(firstImage.data.split(',')[1], 'base64'));
+  await chat.locator('.flow-picture').screenshot({ path: join(artifacts, 'source-flow.png') });
+  const colors = await reader.evaluate(async () => {
+    const img = document.querySelector('.original-visual img'); await img.decode();
+    const canvas = document.createElement('canvas'); canvas.width = img.naturalWidth; canvas.height = img.naturalHeight; const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0);
+    const result = []; for (let y = 0; y < canvas.height; y += 7) for (let x = 0; x < canvas.width; x += 7) { const p = ctx.getImageData(x, y, 1, 1).data; result.push(p[0] + ',' + p[1] + ',' + p[2]); }
+    return [...new Set(result)];
+  });
+  check('flow snapshot retains the original blue, green and amber panel colors', ['17,24,32', '15,32,25', '48,36,17'].every(color => colors.includes(color)));
+  await reader.setViewportSize({ width: 1480, height: 1400 }); await reader.locator('#card-scroll').evaluate(el => el.scrollTop = 0);
+  await reader.screenshot({ path: join(artifacts, 'visual-reader-desktop.png') });
+  await reader.locator('.visual-target').click();
+  check('visuals open in a larger reader dialog', await reader.locator('#visual-dialog').isVisible() && await reader.locator('#visual-full-image').getAttribute('src') === firstImage.data);
+  await reader.click('#visual-zoom'); check('original-size zoom is available', await reader.locator('#visual-zoom').getAttribute('aria-pressed') === 'true');
+  await reader.click('#visual-close');
+  await reader.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+    writeText: async value => { globalThis.__copiedMarkdown = value; },
+    write: async items => { const blob = await items[0].getType('image/png'); globalThis.__copiedImage = { type: blob.type, bytes: Array.from(new Uint8Array(await blob.arrayBuffer()).slice(0, 8)), size: blob.size }; }
+  } }));
+  await reader.locator('[data-visual-action="copy"]').click(); await reader.waitForFunction(() => !!globalThis.__copiedImage);
+  check('copy image writes a valid PNG clipboard item without touching the system clipboard in tests', await reader.evaluate(() => __copiedImage.type === 'image/png' && __copiedImage.size > 1000 && __copiedImage.bytes.join(',') === '137,80,78,71,13,10,26,10'));
+  const pngDownload = reader.waitForEvent('download'); await reader.locator('[data-visual-action="download"]').click();
+  const downloadedPng = await pngDownload; await downloadedPng.saveAs(join(artifacts, 'downloaded-flow.png'));
+  check('download image produces a PNG file', downloadedPng.suggestedFilename().endsWith('.png') && (await readFile(join(artifacts, 'downloaded-flow.png'))).subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])));
+  await reader.click('#copy');
+  check('copy card embeds its local images in portable Markdown', await reader.evaluate(() => __copiedMarkdown.includes('data:image/png;base64,') && !__copiedMarkdown.includes('fold-visual:')));
+  await reader.click('.settings summary'); const mdDownload = reader.waitForEvent('download'); await reader.click('#download');
+  const downloadedMd = await mdDownload; await downloadedMd.saveAs(join(artifacts, 'visual-export.md')); await reader.click('.settings summary');
+  const exportedMd = await readFile(join(artifacts, 'visual-export.md'), 'utf8');
+  check('conversation export retains visual data without unresolved internal markers', exportedMd.includes('data:image/png;base64,') && !exportedMd.includes('fold-visual:'));
+  await reader.locator('#flow button').filter({ hasText: '图片与矢量图' }).click();
+  check('ordinary images and vector charts remain in document order', await reader.locator('.original-visual img').count() === 2);
+  await reader.setViewportSize({ width: 390, height: 900 });
+  await reader.locator('#flow button').filter({ hasText: '先看整个数据传递过程' }).click();
+  check('large diagrams fit the narrow side panel without page overflow', await reader.evaluate(() => document.documentElement.scrollWidth <= innerWidth && document.querySelector('.original-visual img').getBoundingClientRect().width < innerWidth));
+  await reader.locator('.visual-target').click();
+  const visualBox = await reader.locator('#visual-dialog').boundingBox();
+  check('visual enlargement dialog fits a narrow side panel', visualBox.x >= 0 && visualBox.x + visualBox.width <= 390 && visualBox.y >= 0 && visualBox.y + visualBox.height <= 900);
+  await reader.click('#visual-close'); await reader.setViewportSize({ width: 1480, height: 950 });
+  const oldDiagramId = firstImage.id;
+  await chat.evaluate(() => { const title = document.querySelector('.flow-panel strong'); title.textContent = '前端浏览器（已更新）'; });
+  await waitSnapshot(worker, s => s?.snapshot.messages.find(m => m.id === 'visual-a')?.visuals?.[0].id !== oldDiagramId);
+  check('diagram changes refresh their captured image automatically', true);
+  let externalImageRequests = 0;
+  const externalPng = await readFile(join(original, 'icon.png'));
+  await context.route('https://visual-cdn.example/image.png', route => { externalImageRequests++; return route.fulfill({ contentType: 'image/png', body: externalPng }); });
+  await chat.evaluate(() => { const img = document.createElement('img'); img.alt = '跨域受限图片'; img.src = 'https://visual-cdn.example/image.png'; img.style.width = '150px'; img.style.height = '70px'; document.querySelector('[data-markdown-text-style]').append(img); });
+  const blockedImage = await waitSnapshot(worker, s => s?.snapshot.messages.find(m => m.id === 'visual-a')?.visuals?.some(v => v.kind === 'unavailable' && v.text.includes('跨域受限图片')));
+  check('cross-origin image restrictions produce an explicit fallback instead of breaking text capture', blockedImage.status === 'live');
+  await reader.waitForTimeout(800);
+  check('the extension does not refetch remote image URLs', externalImageRequests === 1);
   const other = await context.newPage(); await other.goto('https://chatgpt.com/c/another-source');
   const otherId = await worker.evaluate(async () => (await chrome.tabs.query({})).find(t => t.url?.includes('/c/another-source')).id);
   await worker.evaluate(async id => { await globalThis.__foldTestAttach(id); }, otherId);
