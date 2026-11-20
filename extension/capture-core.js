@@ -1,6 +1,6 @@
 /* Runs in Chrome's isolated content-script world. No network or account APIs. */
 (() => {
-  const VERSION = '1.2.0';
+  const VERSION = '1.2.1';
   if (globalThis.FoldCapture?.version === VERSION) return;
   const allowed = url => { try { const u = new URL(url); return u.protocol === 'https:' && ['chatgpt.com', 'chat.openai.com'].includes(u.hostname); } catch { return false; } };
   const skipped = 'button,script,style,svg,nav,form,textarea,input,select,[contenteditable="true"],[role="textbox"],[hidden],[aria-hidden="true"],[data-markdown-text-tone="tertiary"],.sr-only';
@@ -151,11 +151,15 @@
     candidates.sort((a, b) => a.node === b.node ? 0 : a.node.compareDocumentPosition(b.node) & 4 ? -1 : 1);
     return { candidates, counts, excluded };
   }
-  function readMessage({ node, role }, excluded) {
+  function readMessage({ node, role }, excluded, visualNodes = []) {
     let roots = allWithSelf(node, role === 'user' ? bubbleSelector : assistantSelector).filter(el => !excluded(el));
     if (!roots.length) roots = allWithSelf(node, '.markdown,[data-message-content],.whitespace-pre-wrap').filter(el => !excluded(el));
-    roots = outermost(roots);
-    const text = trim((roots.length ? roots : [node]).map(el => activeVisuals.has(el) ? serialize(el) : inline(el)).join('\n\n'));
+    // Some ChatGPT layouts put Markdown containers INSIDE a diagram's panels.
+    // Include the visual frame before reducing roots, otherwise those inner
+    // containers bypass the frame marker and flatten the diagram back to text.
+    const visuals = visualNodes.filter(visual => visual === node || node.contains(visual));
+    roots = outermost([...roots, ...visuals]).sort((a, b) => a === b ? 0 : a.compareDocumentPosition(b) & 4 ? -1 : 1);
+    const text = trim((roots.length ? roots : [node]).map(serialize).join('\n\n'));
     return { id: messageId(node, role), role, text: text || (node.querySelector('img,canvas,video,[data-testid*="attachment"]') ? '[附件内容，请在原对话查看]' : '') };
   }
   function capture(document, url, context) {
@@ -164,7 +168,7 @@
     const { candidates, counts, excluded } = context?.discovered || discover(document);
     activeVisuals = context?.map || new WeakMap();
     const dom = candidates.map(candidate => {
-      const message = readMessage(candidate, excluded);
+      const message = readMessage(candidate, excluded, context?.nodes);
       const ids = [...new Set(Array.from(message.text.matchAll(/fold-visual:([\w-]+)/g), match => match[1]))];
       const visuals = ids.map(id => context?.assets.get(id)).filter(Boolean);
       return visuals.length ? { ...message, visuals } : message;
@@ -198,7 +202,7 @@
   }
   async function captureRich(document, url) {
     if (!globalThis.FoldVisualCapture) return capture(document, url);
-    const discovered = discover(document), map = new WeakMap(), assets = new Map();
+    const discovered = discover(document), map = new WeakMap(), assets = new Map(), nodes = [];
     let bytes = 0;
     for (const { node } of discovered.candidates) {
       const messageAssets = new Set();
@@ -210,9 +214,10 @@
         }
         if (!assets.has(asset.id)) assets.set(asset.id, asset);
         map.set(visual, assets.get(asset.id));
+        nodes.push(visual);
       }
     }
-    return capture(document, url, { discovered, map, assets });
+    return capture(document, url, { discovered, map, assets, nodes });
   }
   globalThis.FoldCapture = { version: VERSION, capture, captureRich, serialize, allowed, keyFor };
 })();

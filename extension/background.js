@@ -1,3 +1,4 @@
+import { visualFormat } from './visual-utils.js';
 const KEY = 'foldSession';
 const allowed = url => { try { const u = new URL(url); return u.protocol === 'https:' && ['chatgpt.com', 'chat.openai.com'].includes(u.hostname); } catch { return false; } };
 let session = { status: 'idle', tabId: null, snapshot: null, error: '' };
@@ -42,7 +43,10 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         key: new URL(s.url).origin + new URL(s.url).pathname.replace(/\/$/, ''), url: s.url,
         title: String(s.title || '当前对话').slice(0, 200), capturedAt: Date.now(), scope: s.scope,
         messages: s.messages.filter(m => ['assistant', 'user'].includes(m.role) && typeof m.text === 'string').map(m => ({ id: String(m.id), role: m.role, text: m.text,
-          ...(Array.isArray(m.visuals) && m.visuals.length ? { visuals: m.visuals.slice(0, 24).filter(v => typeof v.id === 'string' && /^visual-[\w-]+$/.test(v.id)).map(v => ({ id: v.id, kind: ['diagram', 'image'].includes(v.kind) && typeof v.data === 'string' && /^data:image\/png;base64,[\dA-Za-z+/=]+$/.test(v.data) && v.data.length <= 1_200_000 ? v.kind : 'unavailable', data: typeof v.data === 'string' && /^data:image\/png;base64,[\dA-Za-z+/=]+$/.test(v.data) && v.data.length <= 1_200_000 ? v.data : undefined, width: Math.min(4000, Math.max(1, Number(v.width) || 1)), height: Math.min(10000, Math.max(1, Number(v.height) || 1)), text: String(v.text || '图示').slice(0, 12000), reason: String(v.reason || '此图暂时无法复制，请在原对话查看。').slice(0, 160) })) } : {}) })),
+          ...(Array.isArray(m.visuals) && m.visuals.length ? { visuals: m.visuals.slice(0, 24).filter(v => typeof v.id === 'string' && /^visual-[\w-]+$/.test(v.id)).map(v => {
+            const format = visualFormat(v.data), valid = ['diagram', 'image'].includes(v.kind) && !!format;
+            return { id: v.id, kind: valid ? v.kind : 'unavailable', data: valid ? v.data : undefined, width: Math.min(4000, Math.max(1, Number(v.width) || 1)), height: Math.min(10000, Math.max(1, Number(v.height) || 1)), text: String(v.text || '图示').slice(0, 12000), reason: String(v.reason || '此图暂时无法复制，请在原对话查看。').slice(0, 160) };
+          }) } : {}) })),
         diagnostics: Object.fromEntries(['version', 'legacyMarkers', 'searchUnits', 'turnShells', 'bodyMarkers', 'timelines', 'strategy', 'recognized', 'visuals', 'readyState'].filter(key => ['number', 'string'].includes(typeof s.diagnostics?.[key])).map(key => [key, s.diagnostics[key]]))
       };
       if (new TextEncoder().encode(JSON.stringify(snapshot)).length > 4_000_000) return { stop: true };

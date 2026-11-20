@@ -1,10 +1,13 @@
 import { segmentMarkdown, plainText, comparisonModel } from './reader-core.js';
+import { visualFormat } from './visual-utils.js';
 const $ = id => document.getElementById(id);
 const themes = globalThis.FoldThemes;
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let session = {}, snapshot = null, answers = [], selected = null, result = { cards: [], sections: [] }, views = new Map();
 let preferences = { size: 'balanced', font: 17, follow: false, theme: themes.loadCached() }, toastTimer, saveTimer, currentText = null, currentVisuals = '', enlargedVisual = null;
 let view = { index: 0, scroll: 0, read: new Set() };
+const rasterCache = new Map(), pendingRasters = new Map(), visualFailures = new Map();
+let visualEpoch = 0;
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 3000); }
 async function command(type) { try { const response = await chrome.runtime.sendMessage({ type: 'reader:' + type }); if (response?.error) toast(response.error); } catch { toast('扩展已更新，请关闭此阅读页后重新打开。'); } }
 function savePosition() {
@@ -57,13 +60,14 @@ function markdown(text) {
     FORBID_ATTR: ['style', 'autofocus', 'srcset']
   });
   const template = document.createElement('template'); template.innerHTML = html;
+  const managedImages = new WeakSet();
   template.content.querySelectorAll('[data-fold-visual]').forEach(placeholder => {
     const asset = visualById(placeholder.dataset.foldVisual);
     if (!asset) { placeholder.textContent = '[图示，请在原对话查看]'; return; }
     const figure = document.createElement('figure'); figure.className = 'original-visual';
     if (usableVisual(asset)) {
       const target = document.createElement('button'); target.type = 'button'; target.className = 'visual-target'; target.dataset.visualAction = 'open'; target.dataset.visualId = asset.id; target.setAttribute('aria-label', '放大查看图示');
-      const image = document.createElement('img'); image.src = asset.data; image.alt = asset.text.slice(0, 160); image.width = asset.width; image.height = asset.height; target.append(image); figure.append(target);
+      const image = document.createElement('img'); image.dataset.visualId = asset.id; image.src = asset.data; image.alt = asset.text.slice(0, 160); image.width = asset.width; image.height = asset.height; managedImages.add(image); target.append(image); figure.append(target);
       const caption = document.createElement('figcaption');
       const label = document.createElement('span'); label.textContent = asset.kind === 'diagram' ? '原样图示' : '图片'; caption.append(label);
       for (const [action, title] of [['open', '放大'], ['copy', '复制图片'], ['download', '下载 PNG']]) { const button = document.createElement('button'); button.type = 'button'; button.textContent = title; button.dataset.visualAction = action; button.dataset.visualId = asset.id; caption.append(button); }
@@ -75,7 +79,7 @@ function markdown(text) {
     }
     placeholder.replaceWith(figure);
   });
-  template.content.querySelectorAll('img').forEach(img => { if (img.closest('.original-visual') && /^data:image\/png;base64,[\dA-Za-z+/=]+$/.test(img.src)) return; const label = document.createElement('span'); label.className = 'quiet'; label.textContent = `[图片：${img.alt || '请在原对话查看'}]`; img.replaceWith(label); });
+  template.content.querySelectorAll('img').forEach(img => { if (managedImages.has(img)) return; const label = document.createElement('span'); label.className = 'quiet'; label.textContent = `[图片：${img.alt || '请在原对话查看'}]`; img.replaceWith(label); });
   template.content.querySelectorAll('a').forEach(a => {
     if (!/^(https?:|mailto:)/i.test(a.getAttribute('href') || '')) a.removeAttribute('href');
     a.target = '_blank'; a.rel = 'noopener noreferrer';
@@ -83,24 +87,48 @@ function markdown(text) {
   template.content.querySelectorAll('table').forEach(table => { const wrapper = document.createElement('div'); wrapper.className = 'table-wrap'; table.replaceWith(wrapper); wrapper.append(table); });
   const wrapper = document.createElement('div'); wrapper.append(template.content); return wrapper.innerHTML;
 }
-function visualById(id) { return answers.find(a => a.id === selected)?.visuals?.find(asset => asset.id === id); }
-function usableVisual(asset) { return asset && ['diagram', 'image'].includes(asset.kind) && typeof asset.data === 'string' && /^data:image\/png;base64,[\dA-Za-z+/=]+$/.test(asset.data); }
+function visualById(id) { const asset = answers.find(a => a.id === selected)?.visuals?.find(asset => asset.id === id); return asset && rasterCache.has(id) ? { ...asset, data: rasterCache.get(id) } : asset; }
+function usableVisual(asset) { return asset && ['diagram', 'image'].includes(asset.kind) && !!visualFormat(asset.data); }
 function visualStamp(answer) { return JSON.stringify((answer?.visuals || []).map(v => [v.id, v.kind, v.data?.length, v.width, v.height, v.reason])); }
+async function pngVisual(asset) {
+  if (!usableVisual(asset)) throw new Error('Image unavailable');
+  if (visualFormat(asset.data) === 'png') return asset;
+  if (rasterCache.has(asset.id)) return { ...asset, data: rasterCache.get(asset.id) };
+  if (pendingRasters.has(asset.id)) return pendingRasters.get(asset.id);
+  const epoch = visualEpoch;
+  const promise = (async () => {
+    const image = new Image(); image.src = asset.data;
+    let timeout;
+    try { await Promise.race([image.decode(), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Image decode timed out')), 4000); })]); } finally { clearTimeout(timeout); }
+    const width = asset.width, height = asset.height;
+    let scale = Math.min(2, 1800 / width, 3200 / height, Math.sqrt(4_000_000 / (width * height)));
+    const canvas = document.createElement('canvas');
+    for (let attempt = 0; attempt < 4; attempt++) {
+      canvas.width = Math.max(1, Math.ceil(width * scale)); canvas.height = Math.max(1, Math.ceil(height * scale)); canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      const data = canvas.toDataURL('image/png');
+      if (data.length <= 1_200_000) { if (epoch === visualEpoch) { rasterCache.set(asset.id, data); visualFailures.delete(asset.id); } return { ...asset, data }; }
+      scale *= 0.7;
+    }
+    throw new Error('Image too large');
+  })().catch(error => { if (epoch === visualEpoch) visualFailures.set(asset.id, 'png-conversion'); throw error; }).finally(() => pendingRasters.delete(asset.id));
+  pendingRasters.set(asset.id, promise); return promise;
+}
+async function prepareVisuals(visuals = []) { return Promise.all(visuals.map(async asset => { try { return await pngVisual(asset); } catch { return { ...asset, kind: 'unavailable', data: undefined, reason: '图示转换失败，已保留文字，请在原对话查看。' }; } })); }
 function portableMarkdown(text, visuals = []) {
   return text.replace(/!\[[^\]]*\]\(fold-visual:([\w-]+)\)/g, (_, id) => {
     const asset = visuals.find(v => v.id === id); if (!asset) return '[图示，请在原对话查看]';
-    return usableVisual(asset) ? `![${asset.kind === 'diagram' ? '原样图示' : '图片'}](${asset.data})` : '> ' + (asset.reason || '图示未复制') + '\n\n' + asset.text;
+    return usableVisual(asset) && visualFormat(asset.data) === 'png' ? `![${asset.kind === 'diagram' ? '原样图示' : '图片'}](${asset.data})` : '> ' + (asset.reason || '图示未复制') + '\n\n' + asset.text;
   });
 }
-function downloadVisual(asset) {
+async function downloadVisual(asset) {
   if (!usableVisual(asset)) return;
-  const link = document.createElement('a'); link.href = asset.data; link.download = '折页-' + asset.id + '.png'; link.click();
+  try { const image = await pngVisual(asset); const link = document.createElement('a'); link.href = image.data; link.download = '折页-' + asset.id + '.png'; link.click(); } catch { toast('此图转换失败，可以查看图示文字或原对话。'); }
 }
 async function copyVisual(asset) {
   if (!usableVisual(asset)) return;
   try {
-    const bytes = Uint8Array.from(atob(asset.data.split(',')[1]), value => value.charCodeAt(0));
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })]); toast('已复制图片，可直接粘贴。');
+    const blob = pngVisual(asset).then(image => new Blob([Uint8Array.from(atob(image.data.split(',')[1]), value => value.charCodeAt(0))], { type: 'image/png' }));
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); toast('已复制图片，可直接粘贴。');
   } catch { toast('浏览器未允许复制图片，可以使用“下载 PNG”。'); }
 }
 function openVisual(asset) {
@@ -108,7 +136,18 @@ function openVisual(asset) {
   enlargedVisual = asset; $('visual-full-image').src = asset.data; $('visual-full-image').alt = asset.text.slice(0, 200);
   $('visual-full-image').parentElement.classList.remove('zoomed'); $('visual-zoom').textContent = '原尺寸'; $('visual-zoom').setAttribute('aria-pressed', 'false');
   $('visual-title').textContent = asset.kind === 'diagram' ? '原样图示' : '图片'; $('visual-dialog').showModal();
+  pngVisual(asset).then(image => { if (enlargedVisual?.id === asset.id) { enlargedVisual = image; $('visual-full-image').src = image.data; } }).catch(() => {});
 }
+$('card-body').addEventListener('load', event => {
+  const image = event.target; if (!(image instanceof HTMLImageElement) || !image.dataset.visualId) return;
+  const asset = visualById(image.dataset.visualId); if (!asset || visualFormat(asset.data) !== 'svg') return;
+  pngVisual(asset).then(png => { if (image.isConnected && image.dataset.visualId === asset.id) image.src = png.data; }).catch(() => {});
+}, true);
+$('card-body').addEventListener('error', event => {
+  const image = event.target; if (!(image instanceof HTMLImageElement) || !image.dataset.visualId) return;
+  visualFailures.set(image.dataset.visualId, 'display');
+  const target = image.closest('.visual-target'); if (target) { target.textContent = '图示加载失败，可展开图示文字并复制诊断信息。'; target.disabled = true; }
+}, true);
 $('card-body').addEventListener('click', event => {
   const button = event.target.closest('[data-visual-action]'); if (!button) return;
   const asset = visualById(button.dataset.visualId);
@@ -206,6 +245,7 @@ function accept(next) {
   const oldSnapshot = snapshot, nextSnapshot = session.snapshot || null;
   const changedChat = oldSnapshot?.key !== nextSnapshot?.key;
   if (changedChat) {
+    visualEpoch++; rasterCache.clear(); pendingRasters.clear(); visualFailures.clear();
     if ($('visual-dialog').open) $('visual-dialog').close();
     clearTimeout(saveTimer); views = new Map(); selected = null; currentText = null;
     view = { index: 0, scroll: 0, read: new Set() };
@@ -247,24 +287,27 @@ $('follow').addEventListener('change', () => { settingChanged(); if (preferences
 $('size').addEventListener('change', () => { settingChanged(); if (selected) { view.index = 0; view.scroll = 0; view.read.clear(); currentText = null; result = segmentMarkdown(answers.find(a => a.id === selected).text, { size: preferences.size }); renderCard(); savePosition(); } });
 function font(delta) { preferences.font = Math.max(13, Math.min(25, preferences.font + delta)); document.documentElement.style.setProperty('--font', preferences.font + 'px'); $('font-value').textContent = preferences.font; settingChanged(); }
 $('font-up').addEventListener('click', () => font(1)); $('font-down').addEventListener('click', () => font(-1));
-$('copy').addEventListener('click', async () => { try { const answer = answers.find(a => a.id === selected); await navigator.clipboard.writeText(portableMarkdown(result.cards[view.index].markdown, answer?.visuals)); toast('已复制这张卡片的 Markdown。'); } catch { toast('复制未成功，请在独立标签中重试。'); } });
+$('copy').addEventListener('click', async () => { try { const answer = answers.find(a => a.id === selected); await navigator.clipboard.writeText(portableMarkdown(result.cards[view.index].markdown, await prepareVisuals(answer?.visuals))); toast('已复制这张卡片的 Markdown。'); } catch { toast('复制未成功，请在独立标签中重试。'); } });
 $('sync').addEventListener('click', () => command('resume'));
 $('pause').addEventListener('click', () => command(session.status === 'paused' ? 'resume' : 'pause'));
 $('source').addEventListener('click', () => command('source')); $('expand').addEventListener('click', () => command('expand'));
 async function copyDiagnostics() {
   // Counts and layout strategy only: no title, conversation ID, URL path,
   // message text, DOM HTML, cookies or account/session fields.
-  const report = { extension: 'fold-reader', version: chrome.runtime.getManifest().version, status: session.status || 'idle', connected: !!session.tabId, messages: snapshot?.messages.length || 0, answers: answers.length, layout: snapshot?.diagnostics || {} };
+  const current = answers.find(a => a.id === selected)?.visuals || [];
+  const report = { extension: 'fold-reader', version: chrome.runtime.getManifest().version, status: session.status || 'idle', connected: !!session.tabId, messages: snapshot?.messages.length || 0, answers: answers.length, layout: snapshot?.diagnostics || {}, images: { inCurrentAnswer: current.length, available: current.filter(usableVisual).length, unavailable: current.filter(v => !usableVisual(v)).length, displayedOnCard: [...$('card-body').querySelectorAll('.original-visual img')].filter(img => img.complete && img.naturalWidth > 0).length, pngReady: current.filter(v => visualFormat(v.data) === 'png' || rasterCache.has(v.id)).length, failures: [...new Set(visualFailures.values())] } };
   try { await navigator.clipboard.writeText(JSON.stringify(report, null, 2)); toast('已复制诊断信息，不含聊天正文。'); } catch { toast('复制未成功，请在独立标签中重试。'); }
 }
 $('copy-diagnostics').addEventListener('click', copyDiagnostics); $('empty-diagnostics').addEventListener('click', copyDiagnostics);
 $('extension-version').textContent = 'v' + chrome.runtime.getManifest().version;
 $('clear').addEventListener('click', async () => { await command('clear'); await chrome.storage.session.remove('foldReading'); });
-$('download').addEventListener('click', () => {
+$('download').addEventListener('click', async () => {
   if (!snapshot) return;
-  const source = '# ' + snapshot.title + '\n\n来源：' + snapshot.url + '\n\n' + snapshot.messages.map(m => '## ' + (m.role === 'user' ? '用户' : 'AI 回答') + '\n\n' + portableMarkdown(m.text, m.visuals)).join('\n\n---\n\n');
+  const exporting = snapshot;
+  const messages = await Promise.all(exporting.messages.map(async m => '## ' + (m.role === 'user' ? '用户' : 'AI 回答') + '\n\n' + portableMarkdown(m.text, await prepareVisuals(m.visuals))));
+  const source = '# ' + exporting.title + '\n\n来源：' + exporting.url + '\n\n' + messages.join('\n\n---\n\n');
   const url = URL.createObjectURL(new Blob([source], { type: 'text/markdown;charset=utf-8' }));
-  const a = document.createElement('a'); a.href = url; a.download = snapshot.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 90) + '.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+  const a = document.createElement('a'); a.href = url; a.download = exporting.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 90) + '.md'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
 });
 document.addEventListener('keydown', event => {
   if ($('theme-dialog').open || $('visual-dialog').open || event.target.closest('input,select,textarea,button,summary') || event.ctrlKey || event.metaKey || event.altKey || !result.cards.length) return;

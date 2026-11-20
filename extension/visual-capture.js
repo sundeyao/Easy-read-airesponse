@@ -1,7 +1,7 @@
 /* Capture only diagram/image subtrees inside an already-recognized message.
    No page screenshot, network requests, cookies, or page JavaScript execution. */
 (() => {
-  const VERSION = '1.2.0';
+  const VERSION = '1.2.1';
   if (globalThis.FoldVisualCapture?.version === VERSION) return;
   const HTML = 'http://www.w3.org/1999/xhtml', SVG = 'http://www.w3.org/2000/svg';
   const OMIT = 'script,style,link,meta,button,form,input,textarea,select,iframe,object,embed,video,audio,[contenteditable="true"],[role="textbox"],[hidden],.sr-only,[data-markdown-text-tone="tertiary"]';
@@ -53,6 +53,18 @@
       const box = node.getBoundingClientRect();
       if (node.tagName.toLowerCase() === 'svg' && (box.width < 100 || box.height < 55)) continue;
       if (box.width >= 40 && box.height >= 25) found.add(node);
+    }
+    // A diagram can have several internal flex/grid groups. Prefer their shared
+    // outer frame over those fragments, while leaving separate sections alone.
+    for (const piece of [...found]) {
+      for (let frame = piece.parentElement, depth = 0; frame && frame !== root && depth < 10; frame = frame.parentElement, depth++) {
+        const pieces = [...found].filter(other => frame.contains(other));
+        if (pieces.length < 2 || !visible(frame) || frame.matches('pre,code,table')) continue;
+        const css = getComputedStyle(frame);
+        if (parseFloat(css.borderRadius) < 4 || !['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'].some(key => parseFloat(css[key]) > 0)) continue;
+        if (Array.from(frame.querySelectorAll('h1,h2')).some(heading => !pieces.some(part => part.contains(heading)))) continue;
+        found.add(frame);
+      }
     }
     return [...found].filter(node => ![...found].some(parent => parent !== node && parent.contains(node)));
   }
@@ -111,23 +123,6 @@
     for (let el = node; el; el = el.parentElement) { const color = getComputedStyle(el).backgroundColor; if (!clearColor(color)) return color; }
     return getComputedStyle(node).color.match(/rgb\((\d+)/)?.[1] > 150 ? '#111111' : '#ffffff';
   }
-  async function rasterize(svg, width, height) {
-    const image = new Image();
-    image.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
-    let timeout;
-    try { await Promise.race([image.decode(), new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error('Image decode timed out')), 3000); })]); }
-    finally { clearTimeout(timeout); }
-    let scale = Math.min(2, 1800 / width, 3200 / height, Math.sqrt(4_000_000 / (width * height)));
-    const canvas = document.createElement('canvas');
-    for (let attempt = 0; attempt < 4; attempt++) {
-      canvas.width = Math.max(1, Math.ceil(width * scale)); canvas.height = Math.max(1, Math.ceil(height * scale));
-      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-      const data = canvas.toDataURL('image/png');
-      if (data.length <= 1_200_000) return data;
-      scale *= 0.7;
-    }
-    throw new Error('Image snapshot is too large');
-  }
   async function capture(node) {
     const rect = node.getBoundingClientRect(), tag = node.localName;
     const text = trim(textOf(node)).slice(0, 12000) || node.getAttribute('aria-label') || node.alt || '图示';
@@ -145,7 +140,9 @@
       const svg = `<svg xmlns="${SVG}" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><foreignObject width="100%" height="100%">${html}</foreignObject></svg>`;
       if (svg.length > 650000) throw new Error('Diagram snapshot is too large');
       const old = cache.get(node); if (old?.source === svg) return old.asset;
-      const data = await rasterize(svg, width, height);
+      // Rasterize in the reader's extension document, not the source page.
+      // Source-page img-src policies can reject even a locally created SVG.
+      const data = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
       const asset = { id: 'visual-' + hash(svg), kind: 'diagram', data, width, height, text };
       cache.set(node, { source: svg, asset }); return asset;
     } catch { return { id: 'visual-' + hash(text), kind: 'unavailable', text, reason: '此图示暂时无法完整复制，请在原对话查看。' }; }

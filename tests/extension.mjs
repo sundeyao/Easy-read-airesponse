@@ -234,15 +234,24 @@ try {
   check('empty capture keeps watching and recovers automatically when content mounts', true);
   check('section-based legacy turn shells are also supported', (await state(worker)).snapshot.messages[1].id === 'section-a');
   const visualFixture = await readFile(join(root, 'tests/fixtures/visuals.html'), 'utf8');
-  await chat.evaluate(html => {
-    history.pushState({}, '', '/c/visuals');
+  const restrictedFixture = await reader.evaluate(html => {
     const parsed = new DOMParser().parseFromString(html, 'text/html');
-    const style = document.createElement('style'); style.textContent = parsed.querySelector('style').textContent; document.head.append(style);
-    document.title = parsed.title; document.body.replaceWith(parsed.body);
+    const frame = parsed.querySelector('.flow-picture'), children = [...frame.children], first = parsed.createElement('div'), second = parsed.createElement('div');
+    first.className = second.className = 'flow-fragment'; first.style.display = second.style.display = 'flex'; first.style.flexDirection = second.style.flexDirection = 'column';
+    first.append(...children.slice(0, 3)); second.append(...children.slice(4)); frame.replaceChildren(first, children[3], second);
+    const content = parsed.querySelector('[data-markdown-text-style]'); content.removeAttribute('data-markdown-text-style');
+    for (const node of content.querySelectorAll('p,h2,.flow-panel strong,.flow-panel small,.connector')) node.setAttribute('data-markdown-text-style', 'assistant-message');
+    parsed.querySelector('.source-image').src = 'https://chatgpt.com/fixture-image.png';
+    return '<!doctype html>' + parsed.documentElement.outerHTML;
   }, visualFixture);
+  const sampleImage = await reader.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = 320; canvas.height = 140; const ctx = canvas.getContext('2d'); ctx.fillStyle = '#e7edf7'; ctx.fillRect(0, 0, 320, 140); ctx.fillStyle = '#436d9b'; ctx.beginPath(); ctx.arc(160, 70, 44, 0, Math.PI * 2); ctx.fill(); return canvas.toDataURL(); });
+  await context.route('https://chatgpt.com/fixture-image.png', route => route.fulfill({ contentType: 'image/png', body: Buffer.from(sampleImage.split(',')[1], 'base64') }));
+  await context.route('https://chatgpt.com/c/visuals', route => route.fulfill({ contentType: 'text/html;charset=utf-8', headers: { 'content-security-policy': "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src 'self' https: blob:; connect-src 'none'" }, body: restrictedFixture }));
+  await chat.goto('https://chatgpt.com/c/visuals');
   const withVisuals = await waitSnapshot(worker, s => s?.snapshot.key.endsWith('/c/visuals') && s.snapshot.messages.find(m => m.id === 'visual-a')?.visuals?.length === 3);
   const visualAnswer = withVisuals.snapshot.messages.find(m => m.id === 'visual-a');
-  check('styled HTML flow, loaded image and standalone SVG are retained as local PNGs', visualAnswer.visuals.every(v => ['diagram', 'image'].includes(v.kind) && v.data.startsWith('data:image/png;base64,iVBORw0KGgo')));
+  check('nested flow wrappers and fragmented Markdown roots preserve one complete diagram', visualAnswer.visuals[0].kind === 'diagram' && visualAnswer.visuals[0].text.includes('后端 Controller') && visualAnswer.visuals[0].text.includes('腾讯云 COS') && visualAnswer.visuals.filter(v => v.text.includes('后端 Controller')).length === 1);
+  check('source CSP that disallows data images no longer prevents visual capture', visualAnswer.visuals.every(v => ['diagram', 'image'].includes(v.kind) && /^data:image\/(?:png|svg\+xml);base64,/.test(v.data)));
   check('diagram capture excludes drafts and sidebar content', !visualAnswer.visuals.some(v => /DRAFT_SECRET|SIDEBAR_SECRET/.test(v.text)));
   await reader.waitForFunction(() => document.querySelector('.answer.active')?.dataset.answer === 'visual-a');
   await reader.fill('#search', 'HttpServletResponse');
@@ -251,10 +260,12 @@ try {
   check('a complete flow stays one atomic visual marker instead of flattened headings', (visualAnswer.text.match(/fold-visual:/g) || []).length === 3 && !visualAnswer.text.includes('后端 Controller') && visualAnswer.visuals[0].text.includes('后端 Controller') && visualAnswer.visuals[0].text.includes('↑'));
   await reader.waitForFunction(() => document.querySelector('.answer.active')?.dataset.answer === 'visual-a');
   await reader.locator('#flow button').filter({ hasText: '先看整个数据传递过程' }).click();
-  await reader.waitForFunction(() => document.querySelector('.original-visual img')?.complete && document.querySelector('.original-visual img')?.naturalWidth > 0);
+  await reader.waitForFunction(() => document.querySelector('.original-visual img')?.complete && document.querySelector('.original-visual img')?.naturalWidth > 0 && document.querySelector('.original-visual img')?.src.startsWith('data:image/png;base64,'));
   check('reader displays the entire flow as an image in its matching chapter', await reader.locator('#card-body .original-visual').count() === 1 && await reader.locator('#card-body .original-visual img').count() === 1);
   const firstImage = visualAnswer.visuals[0];
-  await writeFile(join(artifacts, 'copied-flow.png'), Buffer.from(firstImage.data.split(',')[1], 'base64'));
+  const displayedPng = await reader.locator('.original-visual img').getAttribute('src');
+  await writeFile(join(artifacts, 'copied-flow.png'), Buffer.from(displayedPng.split(',')[1], 'base64'));
+  check('complete diagrams stay in one reading card without a second image page', await reader.locator('#part-bar').isHidden() && await reader.locator('#card-body .original-visual img').count() === 1);
   await chat.locator('.flow-picture').screenshot({ path: join(artifacts, 'source-flow.png') });
   const colors = await reader.evaluate(async () => {
     const img = document.querySelector('.original-visual img'); await img.decode();
@@ -266,7 +277,7 @@ try {
   await reader.setViewportSize({ width: 1480, height: 1400 }); await reader.locator('#card-scroll').evaluate(el => el.scrollTop = 0);
   await reader.screenshot({ path: join(artifacts, 'visual-reader-desktop.png') });
   await reader.locator('.visual-target').click();
-  check('visuals open in a larger reader dialog', await reader.locator('#visual-dialog').isVisible() && await reader.locator('#visual-full-image').getAttribute('src') === firstImage.data);
+  check('visuals open in a larger reader dialog', await reader.locator('#visual-dialog').isVisible() && await reader.locator('#visual-full-image').getAttribute('src') === displayedPng);
   await reader.click('#visual-zoom'); check('original-size zoom is available', await reader.locator('#visual-zoom').getAttribute('aria-pressed') === 'true');
   await reader.click('#visual-close');
   await reader.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {

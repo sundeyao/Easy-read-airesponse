@@ -1,5 +1,5 @@
 (() => {
-  const VERSION = '1.2.0';
+  const VERSION = '1.2.1';
   if (globalThis.__foldWatcher?.version === VERSION) { globalThis.__foldWatcher.start(); return; }
   globalThis.__foldWatcher?.dispose?.();
   globalThis.__foldWatcher?.stop();
