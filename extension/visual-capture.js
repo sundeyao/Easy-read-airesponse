@@ -1,7 +1,7 @@
 /* Capture only diagram/image subtrees inside an already-recognized message.
    No page screenshot, network requests, cookies, or page JavaScript execution. */
 (() => {
-  const VERSION = '1.2.2';
+  const VERSION = '1.2.3';
   if (globalThis.FoldVisualCapture?.version === VERSION) return;
   const HTML = 'http://www.w3.org/1999/xhtml', SVG = 'http://www.w3.org/2000/svg';
   const OMIT = 'script,style,link,meta,button,form,input,textarea,select,iframe,object,embed,video,audio,[contenteditable="true"],[role="textbox"],[hidden],.sr-only,[data-markdown-text-tone="tertiary"]';
@@ -27,6 +27,9 @@
     return parseFloat(css.borderRadius) >= 4 && ['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'].some(key => parseFloat(css[key]) > 0);
   }
   function containsSections(node, parts) {
+    // Native code panels have colored rounded frames and toolbar SVG icons too.
+    // They must remain source code, never a diagram that omits textbox contents.
+    if (node.querySelector('.cm-content')) return true;
     const headings = Array.from(node.querySelectorAll('h1,h2,h3')).filter(heading => visible(heading) && !parts.some(part => part.contains(heading)));
     if (!headings.length) return false;
     // A bordered diagram can have its own title above its panels. That title

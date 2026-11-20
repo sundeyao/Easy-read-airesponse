@@ -1,6 +1,6 @@
 /* Runs in Chrome's isolated content-script world. No network or account APIs. */
 (() => {
-  const VERSION = '1.2.2';
+  const VERSION = '1.2.3';
   if (globalThis.FoldCapture?.version === VERSION) return;
   const allowed = url => { try { const u = new URL(url); return u.protocol === 'https:' && ['chatgpt.com', 'chat.openai.com'].includes(u.hostname); } catch { return false; } };
   const skipped = 'button,script,style,svg,nav,form,textarea,input,select,[contenteditable="true"],[role="textbox"],[hidden],[aria-hidden="true"],[data-markdown-text-tone="tertiary"],.sr-only';
@@ -23,7 +23,8 @@
   const escape = text => text.replace(/\\/g, '\\\\').replace(/([*_[\]<>])/g, '\\$1');
   const inline = node => Array.from(node.childNodes, serialize).join('');
   let activeVisuals = new WeakMap();
-  const readonlyContent = node => node.querySelector('.cm-content[contenteditable="false"],.cm-content[aria-readonly="true"]:not([contenteditable="true"])');
+  let outputCodeContents = new WeakSet();
+  const codeContent = node => [...(node.matches('.cm-content') ? [node] : []), ...node.querySelectorAll('.cm-content')].find(content => outputCodeContents.has(content) || content.matches('[contenteditable="false"],[aria-readonly="true"]:not([contenteditable="true"])'));
   function codeText(node) {
     if (node.nodeType === 3) return node.textContent;
     if (node.nodeType !== 1 || node.matches('button,script,style,nav,form,textarea,input,select,[contenteditable="true"],[hidden],[aria-hidden="true"],.sr-only')) return '';
@@ -34,11 +35,11 @@
   }
   function codeBlock(node) {
     const editor = node.matches('.cm-editor') ? node : node.querySelector('.cm-editor');
-    const content = editor && readonlyContent(editor);
+    const content = codeContent(node);
     const code = content || node.querySelector('code') || node;
     const lines = content && Array.from(content.querySelectorAll('.cm-line'));
     const value = (lines?.length ? lines.map(line => codeText(line).replace(/\n$/, '')).join('\n') : codeText(code)).replace(/\n$/, '');
-    const language = code.className.match(/(?:language|lang)-([\w#+.-]+)/)?.[1] || node.getAttribute('data-language') || node.getAttribute('data-lang') || editor?.getAttribute('data-language') || '';
+    const language = code.className.match(/(?:language|lang)-([\w#+.-]+)/)?.[1] || code.getAttribute('data-language') || node.getAttribute('data-language') || node.getAttribute('data-lang') || editor?.getAttribute('data-language') || '';
     const lang = /^[\w#+.-]{1,32}$/.test(language) ? language : '';
     const fence = '`'.repeat(Math.max(3, ...Array.from(value.matchAll(/`+/g), match => match[0].length + 1)));
     return '\n\n' + fence + lang + '\n' + value + '\n' + fence + '\n\n';
@@ -46,9 +47,11 @@
   function serialize(node) {
     if (node.nodeType === 3) return escape(node.textContent);
     if (activeVisuals.has(node)) return '\n\n![原样图示](fold-visual:' + activeVisuals.get(node).id + ')\n\n';
-    if (node.nodeType !== 1 || node.matches(skipped)) return '';
+    if (node.nodeType !== 1) return '';
+    if (outputCodeContents.has(node)) return codeBlock(node);
+    if (node.matches(skipped)) return '';
     const tag = node.tagName.toLowerCase();
-    if (tag === 'pre' || (node.matches('.cm-editor') && readonlyContent(node))) return codeBlock(node);
+    if (tag === 'pre' || (node.matches('.cm-editor') && codeContent(node))) return codeBlock(node);
     if (tag === 'code') {
       const value = node.textContent;
       const fence = '`'.repeat(Math.max(1, ...Array.from(value.matchAll(/`+/g), m => m[0].length + 1)));
@@ -109,7 +112,7 @@
   const turnSelector = '[data-turn-key],[data-turn-id],[data-testid^="conversation-turn-"]';
   const roleOf = node => node.getAttribute('data-message-author-role') || node.getAttribute('data-message-role') || node.getAttribute('data-turn');
   const allWithSelf = (node, selector) => [...(node.matches?.(selector) ? [node] : []), ...node.querySelectorAll(selector)];
-  const outermost = nodes => nodes.filter(node => !nodes.some(other => other !== node && other.contains(node)));
+  const outermost = nodes => [...new Set(nodes)].filter(node => !nodes.some(other => other !== node && other.contains(node)));
   function messageId(node, role) {
     if (!ids.has(node)) ids.set(node, `visible-${++nextId}`);
     const owner = node.closest('[data-chatgpt-search-message-ids]') || node.querySelector('[data-chatgpt-search-message-ids]');
@@ -126,9 +129,10 @@
   }
   function discover(document) {
     const styles = new WeakMap();
-    const excluded = node => {
-      if (node.closest('nav,aside,form,[contenteditable="true"],[role="textbox"],[hidden],[inert],[aria-hidden="true"],[data-app-action-timeline-scroll][role="presentation"],[data-markdown-text-tone="tertiary"]')) return true;
+    const excluded = (node, outputContent = null) => {
+      if (node.closest('nav,aside,form,[hidden],[inert],[aria-hidden="true"],[data-chatgpt-composer],[data-app-action-timeline-scroll][role="presentation"],[data-markdown-text-tone="tertiary"]')) return true;
       for (let el = node; el; el = el.parentElement) {
+        if (el !== outputContent && el.matches('[contenteditable="true"],[role="textbox"]')) return true;
         if (!styles.has(el)) { const css = document.defaultView.getComputedStyle(el); styles.set(el, css.display === 'none' || css.visibility === 'hidden'); }
         if (styles.get(el)) return true;
       }
@@ -180,6 +184,12 @@
     return { candidates, counts, excluded };
   }
   function readMessage({ node, role }, excluded, visualNodes = []) {
+    // ChatGPT's rendered answer blocks can be editable CodeMirror textboxes.
+    // Permit that exact content element only inside an assistant message, while
+    // continuing to exclude forms, the composer and any other editable ancestor.
+    if (role === 'assistant') for (const content of allWithSelf(node, '.cm-content')) {
+      if (content.querySelector('.cm-line') && !excluded(content, content)) outputCodeContents.add(content);
+    }
     let roots = allWithSelf(node, role === 'user' ? bubbleSelector : assistantSelector).filter(el => !excluded(el));
     if (!roots.length) roots = allWithSelf(node, '.markdown,[data-message-content],.whitespace-pre-wrap').filter(el => !excluded(el));
     if (!roots.length) roots = [node];
@@ -188,8 +198,8 @@
     // containers bypass the frame marker and flatten the diagram back to text.
     const visuals = visualNodes.filter(visual => visual === node || node.contains(visual));
     // Generated code blocks may be siblings of the marked Markdown paragraphs.
-    // Read only output blocks, including read-only CodeMirror; never the composer.
-    const code = allWithSelf(node, 'pre,.cm-editor').filter(block => !excluded(block) && (block.tagName === 'PRE' || readonlyContent(block)));
+    // Read output blocks, including CodeMirror content without an editor wrapper.
+    const code = allWithSelf(node, 'pre,.cm-editor,.cm-content').filter(block => !excluded(block, outputCodeContents.has(block) ? block : null) && (block.tagName === 'PRE' || codeContent(block)));
     roots = outermost([...roots, ...visuals, ...code]).sort((a, b) => a === b ? 0 : a.compareDocumentPosition(b) & 4 ? -1 : 1);
     const text = trim((roots.length ? roots : [node]).map(serialize).join('\n\n'));
     return { id: messageId(node, role), role, text: text || (node.querySelector('img,canvas,video,[data-testid*="attachment"]') ? '[附件内容，请在原对话查看]' : '') };
@@ -199,6 +209,7 @@
     const raw = embedded(document, url);
     const { candidates, counts, excluded } = context?.discovered || discover(document);
     activeVisuals = context?.map || new WeakMap();
+    outputCodeContents = new WeakSet();
     const dom = candidates.map(candidate => {
       const message = readMessage(candidate, excluded, context?.nodes);
       const ids = [...new Set(Array.from(message.text.matchAll(/fold-visual:([\w-]+)/g), match => match[1]))];
