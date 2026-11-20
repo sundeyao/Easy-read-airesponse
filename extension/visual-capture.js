@@ -1,7 +1,7 @@
 /* Capture only diagram/image subtrees inside an already-recognized message.
    No page screenshot, network requests, cookies, or page JavaScript execution. */
 (() => {
-  const VERSION = '1.2.1';
+  const VERSION = '1.2.2';
   if (globalThis.FoldVisualCapture?.version === VERSION) return;
   const HTML = 'http://www.w3.org/1999/xhtml', SVG = 'http://www.w3.org/2000/svg';
   const OMIT = 'script,style,link,meta,button,form,input,textarea,select,iframe,object,embed,video,audio,[contenteditable="true"],[role="textbox"],[hidden],.sr-only,[data-markdown-text-tone="tertiary"]';
@@ -22,6 +22,20 @@
     return /^(DIV|P|SECTION|H[1-6]|LI|TR|FIGCAPTION)$/.test(node.tagName) ? '\n' + text + '\n' : text;
   }
   function visible(node) { const css = getComputedStyle(node); return !node.closest(OMIT) && css.display !== 'none' && css.visibility !== 'hidden'; }
+  function framed(node) {
+    const css = getComputedStyle(node);
+    return parseFloat(css.borderRadius) >= 4 && ['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'].some(key => parseFloat(css[key]) > 0);
+  }
+  function containsSections(node, parts) {
+    const headings = Array.from(node.querySelectorAll('h1,h2,h3')).filter(heading => visible(heading) && !parts.some(part => part.contains(heading)));
+    if (!headings.length) return false;
+    // A bordered diagram can have its own title above its panels. That title
+    // belongs in the image; several headings or a heading between panels mark
+    // separate prose sections and must prevent capturing their shared parent.
+    if (headings.length !== 1 || !framed(node)) return true;
+    const first = parts.reduce((a, b) => a.compareDocumentPosition(b) & 4 ? a : b);
+    return !(headings[0].compareDocumentPosition(first) & 4) || headings[0].getBoundingClientRect().bottom > first.getBoundingClientRect().top + 2;
+  }
   function detect(root) {
     const found = new Set();
     const explicit = '[data-fold-diagram],[data-mermaid],.mermaid,[data-testid*="diagram"],[data-testid*="visualization"],figure';
@@ -39,11 +53,11 @@
     for (const panel of panels) {
       let owner = panel.parentElement;
       for (let depth = 0; owner && owner !== root && depth < 4; depth++, owner = owner.parentElement) {
-        if (owner.matches('pre,code,table') || owner.querySelector('h1,h2')) continue;
-        const count = panels.filter(other => owner.contains(other)).length;
-        if (count < 2) continue;
+        if (owner.matches('pre,code,table')) continue;
+        const parts = panels.filter(other => owner.contains(other));
+        if (parts.length < 2 || containsSections(owner, parts)) continue;
         const icons = owner.querySelectorAll('svg').length;
-        if (icons < 2 && !/[↓↑→←⇣⇡↔]/.test(textOf(owner))) continue;
+        if (icons < 2 && !/[↓↑→←⇣⇡↔↻↺⟳⟲↩↪⇢⇒⇨↘↗]/.test(textOf(owner))) continue;
         const css = getComputedStyle(owner);
         if (parseFloat(css.borderRadius) >= 4 || parseFloat(css.borderTopWidth) > 0 || css.display === 'grid' || css.display === 'flex') { found.add(owner); break; }
       }
@@ -60,9 +74,7 @@
       for (let frame = piece.parentElement, depth = 0; frame && frame !== root && depth < 10; frame = frame.parentElement, depth++) {
         const pieces = [...found].filter(other => frame.contains(other));
         if (pieces.length < 2 || !visible(frame) || frame.matches('pre,code,table')) continue;
-        const css = getComputedStyle(frame);
-        if (parseFloat(css.borderRadius) < 4 || !['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'].some(key => parseFloat(css[key]) > 0)) continue;
-        if (Array.from(frame.querySelectorAll('h1,h2')).some(heading => !pieces.some(part => part.contains(heading)))) continue;
+        if (!framed(frame) || containsSections(frame, pieces)) continue;
         found.add(frame);
       }
     }

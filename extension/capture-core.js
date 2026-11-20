@@ -1,26 +1,54 @@
 /* Runs in Chrome's isolated content-script world. No network or account APIs. */
 (() => {
-  const VERSION = '1.2.1';
+  const VERSION = '1.2.2';
   if (globalThis.FoldCapture?.version === VERSION) return;
   const allowed = url => { try { const u = new URL(url); return u.protocol === 'https:' && ['chatgpt.com', 'chat.openai.com'].includes(u.hostname); } catch { return false; } };
   const skipped = 'button,script,style,svg,nav,form,textarea,input,select,[contenteditable="true"],[role="textbox"],[hidden],[aria-hidden="true"],[data-markdown-text-tone="tertiary"],.sr-only';
   const ids = new WeakMap(); let nextId = 0;
-  const trim = text => text.replace(/\u00a0/g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const trim = text => {
+    const lines = []; let fence = null;
+    for (const source of text.replace(/\r\n?/g, '\n').split('\n')) {
+      const marker = source.match(/^[ \t]*(`{3,}|~{3,})/);
+      if (fence) {
+        lines.push(source);
+        if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !source.slice(marker[0].length).trim()) fence = null;
+        continue;
+      }
+      if (marker) { fence = marker[1]; lines.push(source); continue; }
+      const line = source.replace(/\u00a0/g, ' ').replace(/[ \t]+$/, '');
+      if (line || lines.at(-1) !== '') lines.push(line);
+    }
+    return lines.join('\n').trim();
+  };
   const escape = text => text.replace(/\\/g, '\\\\').replace(/([*_[\]<>])/g, '\\$1');
   const inline = node => Array.from(node.childNodes, serialize).join('');
   let activeVisuals = new WeakMap();
+  const readonlyContent = node => node.querySelector('.cm-content[contenteditable="false"],.cm-content[aria-readonly="true"]:not([contenteditable="true"])');
+  function codeText(node) {
+    if (node.nodeType === 3) return node.textContent;
+    if (node.nodeType !== 1 || node.matches('button,script,style,nav,form,textarea,input,select,[contenteditable="true"],[hidden],[aria-hidden="true"],.sr-only')) return '';
+    const css = getComputedStyle(node);
+    if (css.display === 'none' || css.visibility === 'hidden') return '';
+    if (node.tagName === 'BR') return '\n';
+    return Array.from(node.childNodes, codeText).join('');
+  }
+  function codeBlock(node) {
+    const editor = node.matches('.cm-editor') ? node : node.querySelector('.cm-editor');
+    const content = editor && readonlyContent(editor);
+    const code = content || node.querySelector('code') || node;
+    const lines = content && Array.from(content.querySelectorAll('.cm-line'));
+    const value = (lines?.length ? lines.map(line => codeText(line).replace(/\n$/, '')).join('\n') : codeText(code)).replace(/\n$/, '');
+    const language = code.className.match(/(?:language|lang)-([\w#+.-]+)/)?.[1] || node.getAttribute('data-language') || node.getAttribute('data-lang') || editor?.getAttribute('data-language') || '';
+    const lang = /^[\w#+.-]{1,32}$/.test(language) ? language : '';
+    const fence = '`'.repeat(Math.max(3, ...Array.from(value.matchAll(/`+/g), match => match[0].length + 1)));
+    return '\n\n' + fence + lang + '\n' + value + '\n' + fence + '\n\n';
+  }
   function serialize(node) {
     if (node.nodeType === 3) return escape(node.textContent);
     if (activeVisuals.has(node)) return '\n\n![原样图示](fold-visual:' + activeVisuals.get(node).id + ')\n\n';
     if (node.nodeType !== 1 || node.matches(skipped)) return '';
     const tag = node.tagName.toLowerCase();
-    if (tag === 'pre') {
-      const code = node.querySelector('code') || node;
-      const value = code.textContent.replace(/\n$/, '');
-      const lang = code.className.match(/language-([\w+-]+)/)?.[1] || '';
-      const fence = '`'.repeat(Math.max(3, ...Array.from(value.matchAll(/`+/g), m => m[0].length + 1)));
-      return '\n\n' + fence + lang + '\n' + value + '\n' + fence + '\n\n';
-    }
+    if (tag === 'pre' || (node.matches('.cm-editor') && readonlyContent(node))) return codeBlock(node);
     if (tag === 'code') {
       const value = node.textContent;
       const fence = '`'.repeat(Math.max(1, ...Array.from(value.matchAll(/`+/g), m => m[0].length + 1)));
@@ -154,11 +182,15 @@
   function readMessage({ node, role }, excluded, visualNodes = []) {
     let roots = allWithSelf(node, role === 'user' ? bubbleSelector : assistantSelector).filter(el => !excluded(el));
     if (!roots.length) roots = allWithSelf(node, '.markdown,[data-message-content],.whitespace-pre-wrap').filter(el => !excluded(el));
+    if (!roots.length) roots = [node];
     // Some ChatGPT layouts put Markdown containers INSIDE a diagram's panels.
     // Include the visual frame before reducing roots, otherwise those inner
     // containers bypass the frame marker and flatten the diagram back to text.
     const visuals = visualNodes.filter(visual => visual === node || node.contains(visual));
-    roots = outermost([...roots, ...visuals]).sort((a, b) => a === b ? 0 : a.compareDocumentPosition(b) & 4 ? -1 : 1);
+    // Generated code blocks may be siblings of the marked Markdown paragraphs.
+    // Read only output blocks, including read-only CodeMirror; never the composer.
+    const code = allWithSelf(node, 'pre,.cm-editor').filter(block => !excluded(block) && (block.tagName === 'PRE' || readonlyContent(block)));
+    roots = outermost([...roots, ...visuals, ...code]).sort((a, b) => a === b ? 0 : a.compareDocumentPosition(b) & 4 ? -1 : 1);
     const text = trim((roots.length ? roots : [node]).map(serialize).join('\n\n'));
     return { id: messageId(node, role), role, text: text || (node.querySelector('img,canvas,video,[data-testid*="attachment"]') ? '[附件内容，请在原对话查看]' : '') };
   }
