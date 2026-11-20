@@ -1,0 +1,29 @@
+<!doctype html><html><head><meta charset="utf-8"><title>纯文本排版 · ChatGPT</title><style>
+body{margin:0;background:#0e0e0e;color:#eee;font:16px/1.7 sans-serif}main{max-width:844px;margin:auto;padding:24px}.code-panel{border:1px solid #555;background:#444;border-radius:26px;overflow:hidden;margin:28px 0}.code-toolbar{display:flex;align-items:center;padding:10px 20px}.code-toolbar span{flex:1}.code-toolbar button{color:inherit;background:none;border:0}.code-body,.preserved-span{padding:10px 22px 20px;font:13px/1.8 Consolas,monospace;white-space:pre}.code-body code{font:inherit;white-space:inherit}p{margin:20px 0}
+</style></head><body><main><div data-app-action-timeline-scroll role="region"><div data-turn-key="plain-turn">
+<div data-content-search-unit-key="turn-0:0:user" data-chatgpt-search-message-ids="plain-q"><div data-user-message-bubble="true">展示 messages 的结构。</div></div>
+<div data-content-search-unit-key="turn-0:0:assistant" data-chatgpt-search-message-ids="plain-a"><div data-markdown-text-style="assistant-message">
+<h2>一、消息结构</h2><p>现在变成：</p>
+<div class="code-panel"><div class="code-toolbar"><span>纯文本</span><button>复制代码</button></div><div class="code-body"><code><span>messages
+    |
+    |-- user
+    |     查看当前目录
+    |
+    |-- assistant
+          tool_use: dir</span></code></div></div>
+<p>注意，这里存储的是模型完整的响应内容，可能包含文本块，也可能包含工具调用块。</p>
+<p>这里的 <code>messages</code> 仍然是正常的行内代码。</p>
+<h2>二、其他预格式文本</h2>
+<div class="preserved-span"><span>root
+├── user
+│   └── 查询
+└── assistant
+    └── tool_use</span></div>
+<div class="code-body"><code data-language="text">第一行<br>    第二行<br><br>        第四行</code></div>
+<h2>三、长行与制表符</h2><div class="code-body"><code data-language="text"><span>root
+	├── request	user
+	└── result	assistant_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz</span></code></div>
+<div hidden><code>HIDDEN_PLAIN_SECRET
+    hidden</code></div><form><code>DRAFT_PLAIN_SECRET
+    draft</code></form>
+</div></div></div></div></main></body></html>

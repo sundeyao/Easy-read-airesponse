@@ -1,6 +1,6 @@
 /* Runs in Chrome's isolated content-script world. No network or account APIs. */
 (() => {
-  const VERSION = '1.2.3';
+  const VERSION = '1.2.4';
   if (globalThis.FoldCapture?.version === VERSION) return;
   const allowed = url => { try { const u = new URL(url); return u.protocol === 'https:' && ['chatgpt.com', 'chat.openai.com'].includes(u.hostname); } catch { return false; } };
   const skipped = 'button,script,style,svg,nav,form,textarea,input,select,[contenteditable="true"],[role="textbox"],[hidden],[aria-hidden="true"],[data-markdown-text-tone="tertiary"],.sr-only';
@@ -25,6 +25,14 @@
   let activeVisuals = new WeakMap();
   let outputCodeContents = new WeakSet();
   const codeContent = node => [...(node.matches('.cm-content') ? [node] : []), ...node.querySelectorAll('.cm-content')].find(content => outputCodeContents.has(content) || content.matches('[contenteditable="false"],[aria-readonly="true"]:not([contenteditable="true"])'));
+  function formattedCode(node) {
+    if (!node.matches('code,span')) return false;
+    const multiline = /[\r\n]/.test(node.textContent);
+    if (node.tagName === 'CODE' && (multiline || node.querySelector('br') || node.hasAttribute('data-language') || /(?:language|lang)-[\w#+.-]+/.test(node.className))) return true;
+    const css = getComputedStyle(node);
+    const preservesSpace = ['pre', 'pre-wrap', 'break-spaces'].includes(css.whiteSpace);
+    return preservesSpace && (node.tagName === 'CODE' || (multiline && /monospace|consolas|menlo|monaco|courier/i.test(css.fontFamily)));
+  }
   function codeText(node) {
     if (node.nodeType === 3) return node.textContent;
     if (node.nodeType !== 1 || node.matches('button,script,style,nav,form,textarea,input,select,[contenteditable="true"],[hidden],[aria-hidden="true"],.sr-only')) return '';
@@ -51,7 +59,7 @@
     if (outputCodeContents.has(node)) return codeBlock(node);
     if (node.matches(skipped)) return '';
     const tag = node.tagName.toLowerCase();
-    if (tag === 'pre' || (node.matches('.cm-editor') && codeContent(node))) return codeBlock(node);
+    if (tag === 'pre' || (node.matches('.cm-editor') && codeContent(node)) || formattedCode(node)) return codeBlock(node);
     if (tag === 'code') {
       const value = node.textContent;
       const fence = '`'.repeat(Math.max(1, ...Array.from(value.matchAll(/`+/g), m => m[0].length + 1)));
@@ -200,7 +208,8 @@
     // Generated code blocks may be siblings of the marked Markdown paragraphs.
     // Read output blocks, including CodeMirror content without an editor wrapper.
     const code = allWithSelf(node, 'pre,.cm-editor,.cm-content').filter(block => !excluded(block, outputCodeContents.has(block) ? block : null) && (block.tagName === 'PRE' || codeContent(block)));
-    roots = outermost([...roots, ...visuals, ...code]).sort((a, b) => a === b ? 0 : a.compareDocumentPosition(b) & 4 ? -1 : 1);
+    const formatted = allWithSelf(node, 'code,span').filter(block => !excluded(block) && formattedCode(block));
+    roots = outermost([...roots, ...visuals, ...code, ...formatted]).sort((a, b) => a === b ? 0 : a.compareDocumentPosition(b) & 4 ? -1 : 1);
     const text = trim((roots.length ? roots : [node]).map(serialize).join('\n\n'));
     return { id: messageId(node, role), role, text: text || (node.querySelector('img,canvas,video,[data-testid*="attachment"]') ? '[附件内容，请在原对话查看]' : '') };
   }

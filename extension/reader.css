@@ -102,3 +102,6 @@
 .visual-footer>span{margin-right:auto;font-size:11px;color:var(--muted)}
 .visual-footer button{font-size:11px}
 @media(max-width:740px){.original-visual{margin:16px 0;padding:6px}#visual-dialog{padding:12px}.visual-footer>span{flex-basis:100%}.visual-full{max-height:calc(100dvh - 180px)}}
+/* Keep text diagrams aligned; long lines scroll instead of wrapping columns. */
+.markdown pre{max-width:100%;min-width:0;white-space:pre;overflow-wrap:normal;word-break:normal;tab-size:4}
+.markdown pre code{display:block;min-width:max-content;white-space:pre;overflow-wrap:normal;word-break:normal;tab-size:4;font-variant-ligatures:none}
