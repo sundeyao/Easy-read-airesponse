@@ -1,9 +1,9 @@
 /* Runs in Chrome's isolated content-script world. No network or account APIs. */
 (() => {
-  const VERSION = '1.2.4';
+  const VERSION = '1.2.5';
   if (globalThis.FoldCapture?.version === VERSION) return;
   const allowed = url => { try { const u = new URL(url); return u.protocol === 'https:' && ['chatgpt.com', 'chat.openai.com'].includes(u.hostname); } catch { return false; } };
-  const skipped = 'button,script,style,svg,nav,form,textarea,input,select,[contenteditable="true"],[role="textbox"],[hidden],[aria-hidden="true"],[data-markdown-text-tone="tertiary"],.sr-only';
+  const skipped = 'button,[role="button"],script,style,svg,nav,form,textarea,input,select,[contenteditable="true"],[role="textbox"],[hidden],[aria-hidden="true"],[data-markdown-text-tone="tertiary"],.sr-only';
   const ids = new WeakMap(); let nextId = 0;
   const trim = text => {
     const lines = []; let fence = null;
@@ -27,11 +27,22 @@
   const codeContent = node => [...(node.matches('.cm-content') ? [node] : []), ...node.querySelectorAll('.cm-content')].find(content => outputCodeContents.has(content) || content.matches('[contenteditable="false"],[aria-readonly="true"]:not([contenteditable="true"])'));
   function formattedCode(node) {
     if (!node.matches('code,span')) return false;
-    const multiline = /[\r\n]/.test(node.textContent);
+    // Inline references stay with their prose regardless of inherited fonts,
+    // white-space styles, source newlines or syntax-highlighting classes.
+    if (node.closest('p,li,td,th,h1,h2,h3,h4,h5,h6,figcaption')) return false;
+    const value = codeText(node);
+    if (!value.trim()) return false;
+    const multiline = /[\r\n]/.test(value);
     if (node.tagName === 'CODE' && (multiline || node.querySelector('br') || node.hasAttribute('data-language') || /(?:language|lang)-[\w#+.-]+/.test(node.className))) return true;
     const css = getComputedStyle(node);
     const preservesSpace = ['pre', 'pre-wrap', 'break-spaces'].includes(css.whiteSpace);
-    return preservesSpace && (node.tagName === 'CODE' || (multiline && /monospace|consolas|menlo|monaco|courier/i.test(css.fontFamily)));
+    if (!preservesSpace) return false;
+    const parent = node.parentElement;
+    const standalone = parent?.childElementCount === 1 && parent.textContent.trim() === node.textContent.trim() && ['block','flex','grid','flow-root'].includes(getComputedStyle(parent).display);
+    if (node.tagName === 'CODE') return standalone;
+    // A bare text diagram is a leaf span occupying its own block container.
+    // Never infer code from prose fragments, UI wrappers or descendant content.
+    return multiline && !node.childElementCount && standalone && /monospace|consolas|menlo|monaco|courier/i.test(css.fontFamily);
   }
   function codeText(node) {
     if (node.nodeType === 3) return node.textContent;
@@ -138,7 +149,7 @@
   function discover(document) {
     const styles = new WeakMap();
     const excluded = (node, outputContent = null) => {
-      if (node.closest('nav,aside,form,[hidden],[inert],[aria-hidden="true"],[data-chatgpt-composer],[data-app-action-timeline-scroll][role="presentation"],[data-markdown-text-tone="tertiary"]')) return true;
+      if (node.closest('button,[role="button"],nav,aside,form,[hidden],[inert],[aria-hidden="true"],[data-chatgpt-composer],[data-app-action-timeline-scroll][role="presentation"],[data-markdown-text-tone="tertiary"]')) return true;
       for (let el = node; el; el = el.parentElement) {
         if (el !== outputContent && el.matches('[contenteditable="true"],[role="textbox"]')) return true;
         if (!styles.has(el)) { const css = document.defaultView.getComputedStyle(el); styles.set(el, css.display === 'none' || css.visibility === 'hidden'); }
@@ -201,6 +212,10 @@
     let roots = allWithSelf(node, role === 'user' ? bubbleSelector : assistantSelector).filter(el => !excluded(el));
     if (!roots.length) roots = allWithSelf(node, '.markdown,[data-message-content],.whitespace-pre-wrap').filter(el => !excluded(el));
     if (!roots.length) roots = [node];
+    roots = roots.map(root => {
+      const paragraph = root.closest('p,h1,h2,h3,h4,h5,h6');
+      return paragraph && (paragraph === node || node.contains(paragraph)) && !excluded(paragraph) ? paragraph : root;
+    });
     // Some ChatGPT layouts put Markdown containers INSIDE a diagram's panels.
     // Include the visual frame before reducing roots, otherwise those inner
     // containers bypass the frame marker and flatten the diagram back to text.

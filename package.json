@@ -1,6 +1,6 @@
 {
   "name": "easy-read-airesponse",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "private": true,
   "type": "module",
   "description": "Read long ChatGPT answers as live, navigable Markdown cards in Chrome and Edge.",

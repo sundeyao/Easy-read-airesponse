@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Service 返回值与异常 · ChatGPT</title><style>
+body{margin:0;background:#0e0e0e;color:#eee;font:16px/1.7 sans-serif}main{max-width:844px;margin:auto;padding:24px}h2{font-size:23px}h3{font-size:19px}p{margin:20px 0}p code,li code,td code{font-family:Consolas,monospace;white-space:pre-wrap;background:#242424;border-radius:4px;padding:2px 4px}.prose-fragment{font-family:Consolas,monospace;white-space:pre-wrap}.code-panel{border:1px solid #555;background:#444;border-radius:26px;overflow:hidden;margin:28px 0}.code-toolbar{display:flex;align-items:center;padding:10px 20px}.code-toolbar span{flex:1}.code-toolbar button{color:inherit;background:none;border:0}.cm-editor{padding:10px 22px 20px;font:13px/1.8 Consolas,monospace;white-space:pre}.cm-line{display:block}.cm-content:focus{outline:none}table{border-collapse:collapse}td{border:1px solid #555;padding:8px}
+</style></head><body><main><div data-app-action-timeline-scroll role="region"><div data-turn-key="java-turn">
+<div data-content-search-unit-key="turn-0:0:user" data-chatgpt-search-message-ids="java-q"><div data-user-message-bubble="true">Service 返回 void，但抛出异常时 Controller 还会继续执行吗？</div></div>
+<div data-content-search-unit-key="turn-0:0:assistant" data-chatgpt-search-message-ids="java-a"><div data-markdown-text-style="assistant-message">
+<h2>5. 检查你是否真正理解</h2><p>回答下面两个问题：</p><h3>问题 1：</h3>
+<p>你的 <code>doPictureReview()</code> 中：</p>
+<div class="code-panel"><div class="code-toolbar"><span>Java</span><button>复制代码</button></div><div class="cm-editor"><div class="cm-content" role="textbox" contenteditable="true" data-language="java"><div class="cm-line"><span>boolean</span> result = this.updateById(updatePicture);</div></div></div></div>
+<p>已经有了 <code>result</code>，为什么还需要：</p>
+<div class="code-panel"><div class="code-toolbar"><span>Java</span><button>复制代码</button></div><div class="cm-editor"><div class="cm-content" role="textbox" contenteditable="true" data-language="java"><div class="cm-line">ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);</div></div></div></div>
+<h3>问题 2：</h3>
+<p class="mixed-sentence"><span class="prose-fragment">如果 Service 返回<span hidden>
+
+</span></span> <code>void</code><span class="prose-fragment">，但是执行过程中抛出了<span hidden>
+</span></span> <code>BusinessException</code><span class="prose-fragment">，Controller 后面的：<span hidden>
+
+</span></span></p>
+<div class="code-panel"><div class="code-toolbar"><span>Java</span><button>复制代码</button></div><div class="cm-editor"><div class="cm-content" role="textbox" contenteditable="true" data-language="java"><div class="cm-line">return ResultUtils.success(true);</div></div></div></div>
+<p>还会执行吗？</p><p>这两个问题分别考查你对<strong>业务异常处理</strong>和<strong>Controller、Service 职责划分</strong>的理解。</p>
+<ul><li><code>void</code> 表示没有返回值。</li><li><code>BusinessException</code> 会中断当前调用。</li></ul>
+<table><tr><td>返回类型</td><td><code>void</code></td></tr></table>
+<p class="code-mention">正文中提到 <code class="language-java">ResultUtils.success(true)</code> 也属于行内代码。</p>
+<p class="multiline-mention">多行源标记中的 <code>doPictureReview(
+request)</code> 仍是正文里的一个引用。</p>
+<p class="ordinary-monospace"><span class="prose-fragment">这是一段普通说明，<br>采用等宽字体也仍然属于正文。</span></p>
+<span class="prose-fragment"><span>Java</span><span hidden>
+
+
+</span><div class="embedded-control"><button>复制代码</button></div></span>
+</div></div></div></div></main></body></html>
