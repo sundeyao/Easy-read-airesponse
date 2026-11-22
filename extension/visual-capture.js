@@ -1,13 +1,13 @@
 /* Capture only diagram/image subtrees inside an already-recognized message.
    No page screenshot, network requests, cookies, or page JavaScript execution. */
 (() => {
-  const VERSION = '1.2.3';
+  const VERSION = '1.2.6';
   if (globalThis.FoldVisualCapture?.version === VERSION) return;
   const HTML = 'http://www.w3.org/1999/xhtml', SVG = 'http://www.w3.org/2000/svg';
   const OMIT = 'script,style,link,meta,button,form,input,textarea,select,iframe,object,embed,video,audio,[contenteditable="true"],[role="textbox"],[hidden],.sr-only,[data-markdown-text-tone="tertiary"]';
   const HTML_TAGS = new Set(['div', 'span', 'p', 'section', 'article', 'figure', 'figcaption', 'strong', 'b', 'em', 'i', 'small', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'td', 'th', 'pre', 'code', 'blockquote']);
   const SVG_TAGS = new Set(['svg', 'g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'tspan', 'defs', 'marker', 'linearGradient', 'radialGradient', 'stop', 'clipPath', 'mask', 'title', 'desc', 'symbol', 'use', 'foreignObject']);
-  const ATTRS = new Set(['id', 'viewBox', 'd', 'x', 'y', 'x1', 'x2', 'y1', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'width', 'height', 'points', 'fill', 'fill-opacity', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'stroke-dasharray', 'stroke-opacity', 'opacity', 'transform', 'preserveAspectRatio', 'text-anchor', 'dominant-baseline', 'font-size', 'font-weight', 'offset', 'stop-color', 'stop-opacity', 'gradientUnits', 'gradientTransform', 'markerWidth', 'markerHeight', 'markerUnits', 'refX', 'refY', 'orient', 'clipPathUnits', 'maskUnits', 'maskContentUnits', 'colspan', 'rowspan']);
+  const ATTRS = new Set(['id', 'viewBox', 'd', 'x', 'y', 'x1', 'x2', 'y1', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'width', 'height', 'points', 'fill', 'fill-opacity', 'fill-rule', 'clip-rule', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'stroke-dasharray', 'stroke-opacity', 'opacity', 'transform', 'preserveAspectRatio', 'text-anchor', 'dominant-baseline', 'font-size', 'font-weight', 'offset', 'stop-color', 'stop-opacity', 'gradientUnits', 'gradientTransform', 'markerWidth', 'markerHeight', 'markerUnits', 'refX', 'refY', 'orient', 'clipPathUnits', 'maskUnits', 'maskContentUnits', 'colspan', 'rowspan']);
   const STYLE = ['display', 'box-sizing', 'width', 'height', 'min-width', 'min-height', 'max-width', 'max-height', 'padding-top', 'padding-right', 'padding-bottom', 'padding-left', 'margin-top', 'margin-right', 'margin-bottom', 'margin-left', 'border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width', 'border-top-style', 'border-right-style', 'border-bottom-style', 'border-left-style', 'border-top-color', 'border-right-color', 'border-bottom-color', 'border-left-color', 'border-radius', 'background-color', 'color', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align', 'text-decoration', 'white-space', 'word-break', 'overflow-wrap', 'vertical-align', 'list-style-type', 'flex-direction', 'flex-wrap', 'flex-grow', 'flex-shrink', 'flex-basis', 'align-items', 'align-self', 'justify-content', 'gap', 'row-gap', 'column-gap', 'grid-template-columns', 'grid-template-rows', 'grid-column', 'grid-row', 'place-items', 'position', 'top', 'right', 'bottom', 'left', 'overflow', 'opacity', 'transform', 'transform-origin', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin'];
   const cache = new WeakMap();
   const imageCache = new WeakMap();
@@ -41,8 +41,12 @@
   }
   function detect(root) {
     const found = new Set();
-    const explicit = '[data-fold-diagram],[data-mermaid],.mermaid,[data-testid*="diagram"],[data-testid*="visualization"],figure';
-    for (const node of root.querySelectorAll(explicit)) {
+    const nativeBox = '[data-d-component="box"][data-d-has-border]';
+    const explicit = '[data-fold-diagram],[data-mermaid],.mermaid,[data-testid*="diagram"],[data-testid*="visualization"],' + nativeBox + ',figure';
+    for (const node of [...(root.matches(explicit) ? [root] : []), ...root.querySelectorAll(explicit)]) {
+      // This is a declared box boundary, including transparent text-only frames.
+      // Editable/native code panels keep using the code-text capture path.
+      if (node.matches(nativeBox) && (node.querySelector('pre,.cm-editor,.cm-content') || node.getBoundingClientRect().height < 20)) continue;
       if (visible(node) && !node.closest('pre') && node.getBoundingClientRect().width >= 80 && (node.querySelector('svg,canvas,img') || node.matches(explicit.replace(',figure', '')))) found.add(node);
     }
     // HTML diagrams often contain several colored cards inside one rounded frame.
@@ -77,6 +81,7 @@
       for (let frame = piece.parentElement, depth = 0; frame && frame !== root && depth < 10; frame = frame.parentElement, depth++) {
         const pieces = [...found].filter(other => frame.contains(other));
         if (pieces.length < 2 || !visible(frame) || frame.matches('pre,code,table')) continue;
+        if (pieces.some(part => part.matches(nativeBox)) && !frame.matches(nativeBox)) continue;
         if (!framed(frame) || containsSections(frame, pieces)) continue;
         found.add(frame);
       }
