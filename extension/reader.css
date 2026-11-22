@@ -105,3 +105,8 @@
 /* Keep text diagrams aligned; long lines scroll instead of wrapping columns. */
 .markdown pre{max-width:100%;min-width:0;white-space:pre;overflow-wrap:normal;word-break:normal;tab-size:4}
 .markdown pre code{display:block;min-width:max-content;white-space:pre;overflow-wrap:normal;word-break:normal;tab-size:4;font-variant-ligatures:none}
+.code-block{margin:1em 0;max-width:100%;min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:10px;background:var(--code-bg)}
+.code-heading{display:flex;align-items:center;gap:8px;padding:8px 13px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px;font-weight:500;line-height:1.5;color:var(--code-text);white-space:normal}
+.code-heading svg{flex:none}.code-title{overflow-wrap:anywhere}.code-heading .code-copy{margin-left:auto;flex:none;border:0;background:transparent;color:var(--muted);padding:4px 6px;font-size:11px;white-space:nowrap}.code-heading .code-copy:hover{background:var(--hover)}
+.markdown .code-block pre{margin:0;border:0;border-radius:0;background:transparent}
+@media(max-width:740px){.code-heading{padding:7px 10px;gap:6px}}

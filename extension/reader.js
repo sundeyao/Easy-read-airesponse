@@ -53,6 +53,23 @@ $('theme-presets').addEventListener('click', event => {
   setTheme(button.dataset.theme === 'custom' ? { ...preferences.theme, preset: 'custom' } : button.dataset.theme);
 });
 for (const part of ['background', 'accent']) $('theme-' + part).addEventListener('input', event => setTheme({ ...preferences.theme, preset: 'custom', [part]: event.target.value }));
+function codeTitle(language) {
+  const titles={python:'Python',py:'Python',java:'Java',javascript:'JavaScript',js:'JavaScript',typescript:'TypeScript',ts:'TypeScript',text:'纯文本',plaintext:'纯文本',txt:'纯文本',html:'HTML',css:'CSS',scss:'SCSS',json:'JSON',xml:'XML',yaml:'YAML',yml:'YAML',sql:'SQL',bash:'Bash',shell:'Shell',sh:'Shell',powershell:'PowerShell',ps1:'PowerShell',cpp:'C++','c++':'C++',c:'C',csharp:'C#','c#':'C#',go:'Go',rust:'Rust',ruby:'Ruby',php:'PHP',markdown:'Markdown',md:'Markdown'};
+  return titles[language.toLowerCase()] || language || '纯文本';
+}
+function decorateCodeBlocks(fragment) {
+  for (const pre of fragment.querySelectorAll('pre')) {
+    const code=pre.querySelector(':scope > code'); if (!code) continue;
+    const language=[...code.classList].map(value=>value.match(/^language-([\w#+.-]{1,32})$/)?.[1]).find(Boolean) || '';
+    const title=codeTitle(language),frame=document.createElement('div'),heading=document.createElement('div');
+    frame.className='code-block';heading.className='code-heading';
+    const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 20 20');icon.setAttribute('width','18');icon.setAttribute('height','18');icon.setAttribute('aria-hidden','true');icon.setAttribute('focusable','false');
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','m6.5 5.5-4 4.5 4 4.5m7-9 4 4.5-4 4.5m-2-10-3 12');path.setAttribute('fill','none');path.setAttribute('stroke','currentColor');path.setAttribute('stroke-width','1.5');path.setAttribute('stroke-linecap','round');path.setAttribute('stroke-linejoin','round');icon.append(path);
+    const label=document.createElement('span');label.className='code-title';label.textContent=title;
+    const copy=document.createElement('button');copy.type='button';copy.className='code-copy';copy.dataset.copyCode='';copy.textContent='复制代码';copy.setAttribute('aria-label','复制 '+title+' 代码');
+    heading.append(icon,label,copy);pre.replaceWith(frame);frame.append(heading,pre);
+  }
+}
 function markdown(text) {
   const source = text.replace(/!\[[^\]]*\]\(fold-visual:([\w-]+)\)/g, (_, id) => `<span data-fold-visual="${id}"></span>`);
   const html = DOMPurify.sanitize(marked.parse(source, { gfm: true, breaks: true }), {
@@ -85,6 +102,7 @@ function markdown(text) {
     a.target = '_blank'; a.rel = 'noopener noreferrer';
   });
   template.content.querySelectorAll('table').forEach(table => { const wrapper = document.createElement('div'); wrapper.className = 'table-wrap'; table.replaceWith(wrapper); wrapper.append(table); });
+  decorateCodeBlocks(template.content);
   const wrapper = document.createElement('div'); wrapper.append(template.content); return wrapper.innerHTML;
 }
 function visualById(id) { const asset = answers.find(a => a.id === selected)?.visuals?.find(asset => asset.id === id); return asset && rasterCache.has(id) ? { ...asset, data: rasterCache.get(id) } : asset; }
@@ -149,6 +167,12 @@ $('card-body').addEventListener('error', event => {
   const target = image.closest('.visual-target'); if (target) { target.textContent = '图示加载失败，可展开图示文字并复制诊断信息。'; target.disabled = true; }
 }, true);
 $('card-body').addEventListener('click', event => {
+  const copyCode=event.target.closest('button[data-copy-code]');
+  if (copyCode) {
+    const frame=copyCode.closest('.code-block'),code=frame?.querySelector('pre > code');
+    if (code) navigator.clipboard.writeText(code.textContent).then(()=>toast('已复制 '+frame.querySelector('.code-title').textContent+' 代码。')).catch(()=>toast('复制未成功，请在独立标签中重试。'));
+    return;
+  }
   const button = event.target.closest('[data-visual-action]'); if (!button) return;
   const asset = visualById(button.dataset.visualId);
   if (button.dataset.visualAction === 'open') openVisual(asset);
